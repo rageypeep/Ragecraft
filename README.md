@@ -1,106 +1,232 @@
 # Ragecraft Server
 
-Starter Minecraft server software built with `minecraft-protocol`.
+Experimental Minecraft-compatible server software written in Node.js.
 
-This is a protocol-level scaffold, not a full survival server yet. Right now it does four useful things:
+Ragecraft started as a protocol-level experiment using `minecraft-protocol`, but has now grown into a small custom server project with a working world bootstrap, basic block interaction, inventory sync, and a compatibility bridge for modern Minecraft Java clients.
 
-- responds to the multiplayer server list ping
-- accepts offline-mode joins
-- spawns players into a minimal empty world state
-- relays chat messages between connected players
+It is not a full survival server yet. It is a research/playground project for learning how Minecraft multiplayer works under the hood.
 
-It also includes an experimental compatibility mode for `26.1.2` that accepts protocol `775` while still using `1.21.11` packet data underneath. That is a bridge for porting, not full native support.
+## Current status
+
+Ragecraft can currently:
+
+- respond to the Minecraft multiplayer server list ping
+- accept offline-mode joins
+- support Minecraft Java `26.1.2` through a compatibility shim
+- complete login, configuration, registry loading, and play-state entry
+- spawn a player into a minimal world
+- send chunks and lighting data
+- allow basic movement
+- support mining and block placement
+- sync a simple hotbar/inventory
+- persist early world/block state experiments
+
+The current `26.1.2` support is not native. It uses `1.21.11` packet data as a base, with manual overrides for newer registry, tag, and packet behaviour.
+
+In other words: it works, but it is gloriously cursed.
+
+## Why this exists
+
+Minecraft multiplayer is far more complex than it looks from the outside.
+
+Ragecraft is a way to explore:
+
+- the Minecraft Java protocol
+- login/configuration/play state transitions
+- dynamic registry loading
+- packet ID remapping
+- chunk and lighting bootstrapping
+- block updates
+- inventory packets
+- world persistence
+- eventually, custom gameplay systems
+
+The long-term idea is to build a Minecraft-compatible experimental server with its own systems, web tooling, and possibly a Nuxt/Three.js admin interface.
 
 ## Quick start
 
-1. Install dependencies:
+Install dependencies:
 
-```powershell
+```bash
 npm install
 ```
-
-2. Start the server:
-
-```powershell
+Start the server:
+```bash
 npm start
 ```
-
-3. Join from Minecraft Java Edition using `localhost:25565`.
-
-`npm start` now defaults to the `26.1.2` compatibility path. To force another target explicitly, start with:
-
-```powershell
+Then join from Minecraft Java Edition using:
+```
+localhost:25565
+```
+By default, ```npm start``` targets the current compatibility path.
+To explicitly run the ```26.1.2``` compatibility mode:
+```PowerShell
 $env:MC_VERSION='26.1.2'
 npm start
 ```
-
-To run the old native Prismarine-supported base instead:
-
-```powershell
+To run the older native Prismarine-supported base:
+```PowerShell
 $env:MC_VERSION='1.21.11'
 npm start
 ```
+## Configuration
 
-## 26.1.2 porting
+Environment variables:
 
-`26.1.2` is the current Java release, but the Prismarine stack in this project does not ship native support for it yet. A manual porting workspace now exists in [porting/26.1.2/README.md](</E:/games/MC server/porting/26.1.2/README.md:1>).
+| Variable | Default | Description |
+|---|---:|---|
+| `MC_HOST` | `0.0.0.0` | Host address |
+| `MC_PORT` | `25565` | Server port |
+| `MC_VERSION` | `26.1.2` | Target Minecraft version |
+| `MC_MOTD` | `Ragecraft Node Server` | Server list MOTD |
+| `MC_MAX_PLAYERS` | `20` | Max player count |
+| `MC_ONLINE_MODE` | `false` | Online-mode authentication |
+| `MC_ENCRYPTION` | `false` | Encryption toggle |
+| `MC_VIEW_DISTANCE` | `10` | View distance |
+| `MC_IS_FLAT` | `false` | Flat world flag |
+| `MC_WELCOME_MESSAGE` | `Welcome to Ragecraft, {username}.` | Join message |
+| `MC_SPAWN_X` | `0` | Spawn X |
+| `MC_SPAWN_Y` | `256` | Spawn Y |
+| `MC_SPAWN_Z` | `0` | Spawn Z |
+| `MC_SPAWN_YAW` | `0` | Spawn yaw |
+| `MC_SPAWN_PITCH` | `0` | Spawn pitch |
 
-To capture the real handshake and login-start packet from a `26.1.2` client, run:
+## 26.1.2 porting notes
 
-```powershell
+Minecraft Java `26.1.2` uses protocol `775`.
+
+The Prismarine stack does not currently provide full native support for this version, so Ragecraft uses a compatibility bridge:
+
+```text
+26.1.2 client
+→ protocol 775
+→ Ragecraft compatibility shim
+→ 1.21.11 packet data base
+→ manual packet/registry/tag overrides
+```
+
+Known areas that needed work:
+
+- login-start UUID payload
+- configuration registry loading
+- dynamic registry schema changes
+- tag payload changes
+- play-state packet ID remapping
+- light/bootstrap packet ordering
+- inventory slot field mapping
+
+## Useful scripts
+
+Run the server:
+
+```bash
+npm start
+```
+
+Run in watch mode:
+
+```bash
+npm run dev
+```
+
+Run tests:
+
+```bash
+npm test
+```
+
+Capture a raw `26.1.2` handshake/login-start packet:
+
+```bash
 npm run probe:26.1.2
 ```
 
-Then connect from a `26.1.2` client to `localhost:25566`.
+Then connect a `26.1.2` client to:
 
-The probe already confirmed:
+```text
+localhost:25566
+```
 
-- `26.1.2` uses protocol `775`
-- `login_start` still carries username plus a 16-byte player UUID payload
-- the first compatibility break is in configuration registry loading
+Fetch Mojang version metadata:
 
-You can generate a `26.1.2` configuration tag payload from Mojang's inner server jar with:
+```bash
+npm run fetch:version-meta
+```
 
-```powershell
+Generate `26.1.2` configuration tags:
+
+```bash
 npm run generate:2612-tags
 ```
 
-You can also generate raw `26.1.2` registry override data for the currently failing registries with:
+Generate `26.1.2` registry override data:
 
-```powershell
+```bash
 npm run generate:2612-registry-overrides
 ```
 
-## Scripts
+## Roadmap
 
-- `npm start` runs the server
-- `npm run dev` runs the server in watch mode
-- `npm test` runs a local smoke test
-- `npm run probe:26.1.2` runs a raw TCP probe for the `26.1.2` handshake
-- `npm run fetch:version-meta` fetches Mojang metadata for `26.1.2`
+### Short-term
 
-## Environment variables
+- dropped item entities
+- item pickup
+- better world save/load
+- proper block/item ID mapping
+- more stable chunk persistence
+- clean up `26.1.2` packet remaps
+- reduce compatibility hacks where possible
 
-- `MC_HOST` default `0.0.0.0`
-- `MC_PORT` default `25565`
-- `MC_VERSION` default `26.1.2`
-- `MC_MOTD` default `Ragecraft Node Server`
-- `MC_MAX_PLAYERS` default `20`
-- `MC_ONLINE_MODE` default `false`
-- `MC_ENCRYPTION` default `false`
-- `MC_VIEW_DISTANCE` default `10`
-- `MC_IS_FLAT` default `false`
-- `MC_WELCOME_MESSAGE` default `Welcome to Ragecraft, {username}.`
-- `MC_SPAWN_X` default `0`
-- `MC_SPAWN_Y` default `256`
-- `MC_SPAWN_Z` default `0`
-- `MC_SPAWN_YAW` default `0`
-- `MC_SPAWN_PITCH` default `0`
+### Medium-term
 
-## What to build next
-
-- chunk streaming so players have a real world instead of the void
-- movement validation and entity tracking
+- multiple players in the same world
+- entity tracking
+- player persistence
 - command handling
-- persistence for players and world state
-- plugin or module hooks once the core loop is stable
+- better world generation
+- basic survival loop
+- block breaking rules
+- inventory merging and stack logic
+
+### Long-term
+
+- plugin/module system
+- web dashboard
+- Three.js world/admin viewer
+- live server controls
+- custom events
+- AI/NPC experiments
+- experimental gameplay systems
+
+## Project philosophy
+
+Ragecraft is not trying to be Paper, Spigot, Fabric, or a production-ready Minecraft server.
+
+It is a learning project and protocol playground.
+
+The goal is to understand the pieces Minecraft normally hides:
+
+```text
+handshake
+→ login
+→ configuration
+→ registries
+→ play state
+→ chunks
+→ lighting
+→ block updates
+→ inventory
+→ world simulation
+```
+
+If it works, brilliant.
+
+If it breaks, that probably means there is another packet to bully into submission.
+
+## Disclaimer
+
+Ragecraft is an unofficial experimental project.
+
+It is not affiliated with Mojang, Microsoft, or Minecraft.
+
+Minecraft is a trademark of Microsoft/Mojang. This project does not include Minecraft assets and is intended for protocol research, learning, and custom server experimentation.
