@@ -1,0 +1,36 @@
+{
+  "name": "ragecraft-server",
+  "version": "0.1.0",
+  "description": "Starter Minecraft server software built with minecraft-protocol.",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node scripts/smoke-test.js && node scripts/probe-test.js",
+    "probe:26.1.2": "node src/probe/server.js",
+    "fetch:version-meta": "node scripts/fetch-version-meta.js 26.1.2",
+    "generate:2612-tags": "node scripts/generate-2612-tags.js",
+    "generate:2612-registry-overrides": "node scripts/generate-2612-registry-overrides.js",
+    "generate:2612-packet-map": "node scripts/generate-2612-packet-map.js"
+  },
+  "keywords": [
+    "minecraft",
+    "minecraft-server",
+    "nodejs",
+    "minecraft-protocol"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@run-slicer/cfr": "^0.1.6-0.152",
+    "minecraft-data": "^3.110.2",
+    "minecraft-protocol": "^1.66.2",
+    "prismarine-chunk": "^1.40.0",
+    "prismarine-nbt": "^2.8.0",
+    "vec3": "^0.2.0"
+  }
+}

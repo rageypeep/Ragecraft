@@ -1,0 +1,10 @@
+node_modules/
+.env
+npm-debug.log*
+porting/26.1.2/libraries/
+porting/26.1.2/server-26.1.2-extract/
+porting/26.1.2/server.jar
+porting/26.1.2/server-26.1.2.jar
+porting/26.1.2/server-26.1.2-extract/
+porting/26.1.2/generated-reports/
+porting/26.1.2/generated-reports-2/

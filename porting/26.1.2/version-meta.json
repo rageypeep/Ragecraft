@@ -1,0 +1,55 @@
+{
+  "fetchedAt": "2026-05-14T20:45:45.927Z",
+  "latest": {
+    "release": "26.1.2",
+    "snapshot": "26.2-snapshot-7"
+  },
+  "version": {
+    "id": "26.1.2",
+    "type": "release",
+    "url": "https://piston-meta.mojang.com/v1/packages/ab0bcda5c7dc67dc153dad3a95270bfccb73fd6e/26.1.2.json",
+    "time": "2026-05-12T06:43:59+00:00",
+    "releaseTime": "2026-04-09T10:12:23+00:00",
+    "sha1": "ab0bcda5c7dc67dc153dad3a95270bfccb73fd6e",
+    "complianceLevel": 1
+  },
+  "detail": {
+    "id": "26.1.2",
+    "type": "release",
+    "javaVersion": {
+      "component": "java-runtime-epsilon",
+      "majorVersion": 25
+    },
+    "assetIndex": {
+      "id": "30",
+      "sha1": "9672f7185226f6be5662bccd8b685c4dc0abdf3c",
+      "size": 548290,
+      "totalSize": 449037874,
+      "url": "https://piston-meta.mojang.com/v1/packages/9672f7185226f6be5662bccd8b685c4dc0abdf3c/30.json"
+    },
+    "downloads": {
+      "client": {
+        "sha1": "4e618f09a0c649dde3fdf829df443ce0b8831e65",
+        "size": 38113927,
+        "url": "https://piston-data.mojang.com/v1/objects/4e618f09a0c649dde3fdf829df443ce0b8831e65/client.jar"
+      },
+      "server": {
+        "sha1": "97ccd4c0ed3f81bbb7bfacddd1090b0c56f9bc51",
+        "size": 60417480,
+        "url": "https://piston-data.mojang.com/v1/objects/97ccd4c0ed3f81bbb7bfacddd1090b0c56f9bc51/server.jar"
+      }
+    },
+    "logging": {
+      "client": {
+        "argument": "-Dlog4j.configurationFile=${path}",
+        "file": {
+          "id": "client-1.21.2.xml",
+          "sha1": "39384bd14c0606d812afec88d8aff595b2587dd9",
+          "size": 1073,
+          "url": "https://piston-data.mojang.com/v1/objects/39384bd14c0606d812afec88d8aff595b2587dd9/client-1.21.2.xml"
+        },
+        "type": "log4j2-xml"
+      }
+    }
+  }
+}

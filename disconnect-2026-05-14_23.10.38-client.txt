@@ -1,0 +1,155 @@
+---- Minecraft Network Protocol Error Report ----
+// I heard pigeons are more reliable
+
+Time: 2026-05-14 23:10:38
+Description: Registry Loading
+
+java.lang.IllegalStateException: Failed to load registries due to errors
+	at net.minecraft.resources.RegistryDataLoader.createReportWithBriefInfo(RegistryDataLoader.java:281)
+	at net.minecraft.resources.RegistryDataLoader.logErrors(RegistryDataLoader.java:262)
+	at net.minecraft.resources.RegistryDataLoader.lambda$load$2(RegistryDataLoader.java:232)
+	at java.base/java.util.concurrent.CompletableFuture$UniApply.tryFire(CompletableFuture.java:667)
+	at java.base/java.util.concurrent.CompletableFuture$Completion.exec(CompletableFuture.java:504)
+	at java.base/java.util.concurrent.ForkJoinTask.doExec(ForkJoinTask.java:511)
+	at java.base/java.util.concurrent.ForkJoinPool$WorkQueue.topLevelExec(ForkJoinPool.java:1450)
+	at java.base/java.util.concurrent.ForkJoinPool.runWorker(ForkJoinPool.java:2019)
+	at java.base/java.util.concurrent.ForkJoinWorkerThread.run(ForkJoinWorkerThread.java:187)
+
+
+A detailed walkthrough of the error, its code path and all known details is as follows:
+---------------------------------------------------------------------------------------
+
+-- Head --
+Thread: Render thread
+Stacktrace:
+	at net.minecraft.resources.RegistryDataLoader.createReportWithBriefInfo(RegistryDataLoader.java:281)
+
+-- Loading info --
+Details:
+	Errors: 
+		minecraft:root/minecraft:cat_sound_variant: Registry must be non-empty: minecraft:cat_sound_variant
+		minecraft:root/minecraft:chicken_sound_variant: Registry must be non-empty: minecraft:chicken_sound_variant
+		minecraft:root/minecraft:cow_sound_variant: Registry must be non-empty: minecraft:cow_sound_variant
+		minecraft:root/minecraft:pig_sound_variant: Registry must be non-empty: minecraft:pig_sound_variant
+Stacktrace:
+	at net.minecraft.resources.RegistryDataLoader.createReportWithBriefInfo(RegistryDataLoader.java:281)
+	at net.minecraft.resources.RegistryDataLoader.logErrors(RegistryDataLoader.java:262)
+	at net.minecraft.resources.RegistryDataLoader.lambda$load$2(RegistryDataLoader.java:232)
+	at java.base/java.util.concurrent.CompletableFuture$UniApply.tryFire(CompletableFuture.java:667)
+	at java.base/java.util.concurrent.CompletableFuture$Completion.exec(CompletableFuture.java:504)
+	at java.base/java.util.concurrent.ForkJoinTask.doExec(ForkJoinTask.java:511)
+	at java.base/java.util.concurrent.ForkJoinPool$WorkQueue.topLevelExec(ForkJoinPool.java:1450)
+	at java.base/java.util.concurrent.ForkJoinPool.runWorker(ForkJoinPool.java:2019)
+	at java.base/java.util.concurrent.ForkJoinWorkerThread.run(ForkJoinWorkerThread.java:187)
+
+-- Received Elements and Tags --
+Details:
+	Dynamic Registries: 
+		minecraft:banner_pattern: elements=43 tags=11
+		minecraft:cat_variant: elements=11 tags=0
+		minecraft:chat_type: elements=7 tags=0
+		minecraft:chicken_variant: elements=3 tags=0
+		minecraft:cow_variant: elements=3 tags=0
+		minecraft:damage_type: elements=50 tags=33
+		minecraft:dialog: elements=3 tags=2
+		minecraft:dimension_type: elements=4 tags=0
+		minecraft:enchantment: elements=43 tags=22
+		minecraft:frog_variant: elements=3 tags=0
+		minecraft:instrument: elements=8 tags=3
+		minecraft:jukebox_song: elements=21 tags=0
+		minecraft:painting_variant: elements=51 tags=1
+		minecraft:pig_variant: elements=3 tags=0
+		minecraft:test_environment: elements=1 tags=0
+		minecraft:test_instance: elements=1 tags=0
+		minecraft:timeline: elements=4 tags=4
+		minecraft:trim_material: elements=11 tags=0
+		minecraft:trim_pattern: elements=18 tags=0
+		minecraft:wolf_sound_variant: elements=7 tags=0
+		minecraft:wolf_variant: elements=9 tags=0
+		minecraft:world_clock: elements=2 tags=0
+		minecraft:worldgen/biome: elements=65 tags=68
+		minecraft:zombie_nautilus_variant: elements=2 tags=0
+	Static Registries: 
+		minecraft:block: tags=248
+		minecraft:entity_type: tags=47
+		minecraft:fluid: tags=6
+		minecraft:game_event: tags=5
+		minecraft:item: tags=207
+		minecraft:point_of_interest_type: tags=3
+		minecraft:potion: tags=1
+Stacktrace:
+	at net.minecraft.client.multiplayer.RegistryDataCollector.addCrashDetails(RegistryDataCollector.java:119)
+	at net.minecraft.client.multiplayer.RegistryDataCollector.loadNewElementsAndTags(RegistryDataCollector.java:105)
+	at net.minecraft.client.multiplayer.RegistryDataCollector.collectGameRegistries(RegistryDataCollector.java:161)
+	at net.minecraft.client.multiplayer.ClientConfigurationPacketListenerImpl.lambda$handleConfigurationFinished$0(ClientConfigurationPacketListenerImpl.java:153)
+	at net.minecraft.client.multiplayer.ClientConfigurationPacketListenerImpl.runWithResources(ClientConfigurationPacketListenerImpl.java:117)
+	at net.minecraft.client.multiplayer.ClientConfigurationPacketListenerImpl.handleConfigurationFinished(ClientConfigurationPacketListenerImpl.java:153)
+	at net.minecraft.network.protocol.configuration.ClientboundFinishConfigurationPacket.handle(ClientboundFinishConfigurationPacket.java:22)
+	at net.minecraft.network.protocol.configuration.ClientboundFinishConfigurationPacket.handle(ClientboundFinishConfigurationPacket.java:8)
+	at net.minecraft.network.PacketProcessor$ListenerAndPacket.handle(PacketProcessor.java:55)
+	at net.minecraft.network.PacketProcessor.processQueuedPackets(PacketProcessor.java:38)
+	at net.minecraft.client.Minecraft.runTick(Minecraft.java:1343)
+	at net.minecraft.client.Minecraft.run(Minecraft.java:991)
+	at net.minecraft.client.main.Main.main(Main.java:248)
+
+-- Incoming Packet --
+Details:
+	Type: clientbound/minecraft:finish_configuration
+	Is Terminal: true
+	Is Skippable: false
+
+-- Connection --
+Details:
+	Protocol: configuration
+	Flow: CLIENTBOUND
+	Is Local: false
+	Server type: OTHER
+	Server brand: ~~NULL~~
+
+-- System Details --
+Details:
+	Minecraft Version: 26.1.2
+	Minecraft Version ID: 26.1.2
+	Operating System: Windows 11 (amd64) version 10.0
+	Java Version: 25.0.1, Microsoft
+	Java VM Version: OpenJDK 64-Bit Server VM (mixed mode), Microsoft
+	Memory: 1639972864 bytes (1564 MiB) / 2147483648 bytes (2048 MiB) up to 4294967296 bytes (4096 MiB)
+	Memory (heap): init: 2048MiB, used: 484MiB, committed: 2048MiB, max: 4096MiB
+	Memory (non-head): init: 007MiB, used: 157MiB, committed: 179MiB, max: 000MiB
+	CPUs: 16
+	Processor Vendor: GenuineIntel
+	Processor Name: 11th Gen Intel(R) Core(TM) i9-11900K @ 3.50GHz
+	Identifier: Intel64 Family 6 Model 167 Stepping 1
+	Microarchitecture: Rocket Lake
+	Frequency (GHz): 3.50
+	Number of physical packages: 1
+	Number of physical CPUs: 8
+	Number of logical CPUs: 16
+	Graphics card #0 name: NVIDIA GeForce RTX 5080
+	Graphics card #0 vendor: NVIDIA
+	Graphics card #0 VRAM (MiB): 16303.00
+	Graphics card #0 deviceId: VideoController1
+	Graphics card #0 versionInfo: 32.0.15.9621
+	Memory slot #0 capacity (MiB): 16384.00
+	Memory slot #0 clockSpeed (GHz): 2.67
+	Memory slot #0 type: DDR4
+	Memory slot #1 capacity (MiB): 16384.00
+	Memory slot #1 clockSpeed (GHz): 2.67
+	Memory slot #1 type: DDR4
+	Memory slot #2 capacity (MiB): 16384.00
+	Memory slot #2 clockSpeed (GHz): 2.67
+	Memory slot #2 type: DDR4
+	Memory slot #3 capacity (MiB): 16384.00
+	Memory slot #3 clockSpeed (GHz): 2.67
+	Memory slot #3 type: DDR4
+	Virtual memory max (MiB): 70373.33
+	Virtual memory used (MiB): 23543.02
+	Swap memory total (MiB): 5000.00
+	Swap memory used (MiB): 0.00
+	Space in storage for jna.tmpdir (MiB): available: 167696.50, total: 952946.00
+	Space in storage for org.lwjgl.system.SharedLibraryExtractPath (MiB): available: 167696.50, total: 952946.00
+	Space in storage for io.netty.native.workdir (MiB): available: 167696.50, total: 952946.00
+	Space in storage for java.io.tmpdir (MiB): available: 167696.50, total: 952946.00
+	Space in storage for workdir (MiB): available: 167696.50, total: 952946.00
+	JVM Flags: 8 total; -XX:HeapDumpPath=MojangTricksIntelDriversForPerformance_javaw.exe_minecraft.exe.heapdump -Xss1M -Xms2G -Xmx4G -XX:+UseCompactObjectHeaders -XX:+AlwaysPreTouch -XX:+UseStringDeduplication -XX:+UseZGC
+	Debug Flags: 0 total; 
