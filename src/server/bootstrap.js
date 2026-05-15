@@ -11,7 +11,45 @@ function createLightUpdatePacket(chunkPacket) {
   };
 }
 
+function buildWorldState(loginPacket, world) {
+  return {
+    ...loginPacket.worldState,
+    isFlat: true,
+    seaLevel: world.surfaceY + 1
+  };
+}
+
+function buildPlayerStatusPackets() {
+  return {
+    experience: {
+      experienceBar: 0,
+      level: 0,
+      totalExperience: 0
+    },
+    health: {
+      health: 20,
+      food: 20,
+      foodSaturation: 5
+    },
+    time: {
+      age: 0n,
+      time: 1000n,
+      tickDayTime: true
+    }
+  };
+}
+
+function buildRespawnPacket(loginPacket, world, copyMetadata = 0) {
+  return {
+    worldState: buildWorldState(loginPacket, world),
+    copyMetadata
+  };
+}
+
 function buildPlayerBootstrapPackets(client, config, world, loginPacket) {
+  const safeSpawn = world.getSafeSpawnPosition(config.spawn);
+  const worldState = buildWorldState(loginPacket, world);
+  const playerStatus = buildPlayerStatusPackets();
   const login = {
     ...loginPacket,
     enforceSecureChat: false,
@@ -27,11 +65,7 @@ function buildPlayerBootstrapPackets(client, config, world, loginPacket) {
     enableRespawnScreen: true,
     isDebug: false,
     isFlat: true,
-    worldState: {
-      ...loginPacket.worldState,
-      isFlat: true,
-      seaLevel: world.surfaceY + 1
-    }
+    worldState
   };
 
   return {
@@ -41,8 +75,8 @@ function buildPlayerBootstrapPackets(client, config, world, loginPacket) {
       walkingSpeed: 0.1
     },
     border: {
-      x: config.spawn.x,
-      z: config.spawn.z,
+      x: safeSpawn.x,
+      z: safeSpawn.z,
       oldDiameter: 5.9999968e7,
       newDiameter: 5.9999968e7,
       speed: 0,
@@ -55,11 +89,12 @@ function buildPlayerBootstrapPackets(client, config, world, loginPacket) {
       gameMode: 0
     },
     login,
+    playerStatus,
     position: {
       teleportId: 0,
-      x: config.spawn.x,
-      y: config.spawn.y,
-      z: config.spawn.z,
+      x: safeSpawn.x,
+      y: safeSpawn.y,
+      z: safeSpawn.z,
       dx: 0,
       dy: 0,
       dz: 0,
@@ -67,6 +102,8 @@ function buildPlayerBootstrapPackets(client, config, world, loginPacket) {
       pitch: config.spawn.pitch,
       flags: 0x00
     },
+    respawn: buildRespawnPacket(loginPacket, world),
+    safeSpawn,
     simulationDistance: {
       distance: config.viewDistance
     },
@@ -74,9 +111,9 @@ function buildPlayerBootstrapPackets(client, config, world, loginPacket) {
       globalPos: {
         dimensionName: 'minecraft:overworld',
         location: {
-          x: Math.floor(config.spawn.x),
-          y: world.surfaceY + 1,
-          z: Math.floor(config.spawn.z)
+          x: safeSpawn.x,
+          y: safeSpawn.y,
+          z: safeSpawn.z
         }
       },
       yaw: config.spawn.yaw,
@@ -93,6 +130,9 @@ function buildPlayerBootstrapPackets(client, config, world, loginPacket) {
 }
 
 module.exports = {
+  buildPlayerStatusPackets,
   buildPlayerBootstrapPackets,
+  buildRespawnPacket,
+  buildWorldState,
   createLightUpdatePacket
 };

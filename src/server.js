@@ -1,7 +1,6 @@
 const mc = require('minecraft-protocol');
 const { loadConfig } = require('./config');
 const {
-  addItem,
   consumeSelectedItem,
   createPlayerInventory,
   getHotbarItem,
@@ -23,10 +22,31 @@ const {
   writeCompatibilityPositionPacket
 } = require('./compatibility-play');
 const { loadCompatibilityTags } = require('./compatibility-tags');
-const { buildPlayerBootstrapPackets, createLightUpdatePacket } = require('./server/bootstrap');
+const {
+  buildPlayerBootstrapPackets,
+  buildPlayerStatusPackets,
+  buildRespawnPacket,
+  createLightUpdatePacket
+} = require('./server/bootstrap');
 const { buildBlockChangePacket, extractSelectedSlot, shouldBreakBlock } = require('./server/blocks');
 const { createChatApi, extractChatMessage, formatWelcomeMessage } = require('./server/chat');
+const { createItemDropManager } = require('./server/item-entities');
+const {
+  createPlayerState,
+  recordArmAnimation,
+  recordEntityAction,
+  recordPlayerInput,
+  recordPlayerLoaded,
+  recordRequestedAbilities,
+  recordTeleportConfirm,
+  recordUseItem
+} = require('./server/player-state');
 const { resolveVersionTarget } = require('./versioning');
+
+const VOID_RESPAWN_Y = -32;
+const WORLD_TIME_TICK_INTERVAL_MS = 1000;
+const WORLD_TIME_TICK_AMOUNT = 20n;
+const DAY_LENGTH_TICKS = 24000n;
 
 function createMinecraftServer(overrides = {}) {
   const config = loadConfig(overrides);
@@ -48,6 +68,10 @@ function createMinecraftServer(overrides = {}) {
     'max-players': config.maxPlayers,
     'online-mode': config.onlineMode,
     encryption: config.encryption,
+    errorHandler: (client, err) => {
+      console.error(`[client:error] ${client.username ?? 'unknown'} (${client.socket?.remoteAddress ?? 'n/a'}:${client.socket?.remotePort ?? 'n/a'})`, err);
+      client.end(err instanceof Error ? err.message : String(err));
+    },
     registryCodec,
     ...versionTarget.createServerOptions
   });
@@ -66,17 +90,12 @@ function createMinecraftServer(overrides = {}) {
     : 0;
   server.compatibilityTagTypeCount = server.compatibilityTags.length;
   server.world = world;
+  server.worldTimeState = buildPlayerStatusPackets().time;
+  server._ragecraftCleanupHandlers = [];
 
   function connectedClients(excludeClient = null) {
     return Object.values(server.clients).filter((client) => client !== excludeClient);
   }
-
-  const { broadcastPlayerMessage, broadcastSystemMessage, sendMessage } = createChatApi({
-    connectedClients,
-    isCompatibilityActive: () => is2612Compatibility(server),
-    mcData,
-    server
-  });
 
   function writePlayPacket(client, name, params) {
     if (is2612Compatibility(server)) {
@@ -86,6 +105,32 @@ function createMinecraftServer(overrides = {}) {
 
     client.write(name, params);
   }
+
+  function writeLoginPacket(client, params) {
+    if (is2612Compatibility(server)) {
+      writeCompatibilityLoginPacket(client, server, params);
+      return;
+    }
+
+    client.write('login', params);
+  }
+
+  function writePositionPacket(client, params) {
+    if (is2612Compatibility(server)) {
+      writeCompatibilityPositionPacket(client, server, params);
+      return;
+    }
+
+    client.write('position', params);
+  }
+
+  const { broadcastPlayerMessage, broadcastSystemMessage, sendMessage } = createChatApi({
+    connectedClients,
+    isCompatibilityActive: () => is2612Compatibility(server),
+    mcData,
+    server,
+    writePacket: writePlayPacket
+  });
 
   function acknowledgeInteractionSequence(client, sequenceId) {
     if (!Number.isInteger(sequenceId)) {
@@ -105,6 +150,27 @@ function createMinecraftServer(overrides = {}) {
     }
 
     writePlayPacket(client, 'block_change', blockChangePacket);
+  }
+
+  function sendDeniedInteractionCorrections(client, positions) {
+    const seen = new Set();
+
+    for (const position of positions) {
+      const blockChangePacket = buildBlockChangePacket(world, position);
+
+      if (!blockChangePacket) {
+        continue;
+      }
+
+      const blockKey = `${blockChangePacket.location.x},${blockChangePacket.location.y},${blockChangePacket.location.z}`;
+
+      if (seen.has(blockKey)) {
+        continue;
+      }
+
+      seen.add(blockKey);
+      writePlayPacket(client, 'block_change', blockChangePacket);
+    }
   }
 
   function sendModifiedBlockBootstrap(client) {
@@ -136,9 +202,64 @@ function createMinecraftServer(overrides = {}) {
     });
   }
 
+  function allocateTeleportId(client) {
+    const teleportId = client.nextTeleportId ?? 1;
+    client.nextTeleportId = teleportId + 1;
+    return teleportId;
+  }
+
+  function buildPositionPacket(position, teleportId = 0) {
+    return {
+      teleportId,
+      x: position.x,
+      y: position.y,
+      z: position.z,
+      dx: 0,
+      dy: 0,
+      dz: 0,
+      yaw: config.spawn.yaw,
+      pitch: config.spawn.pitch,
+      flags: 0x00
+    };
+  }
+
+  function createSpawnPositionPacket(position) {
+    return {
+      globalPos: {
+        dimensionName: 'minecraft:overworld',
+        location: {
+          x: position.x,
+          y: position.y,
+          z: position.z
+        }
+      },
+      yaw: config.spawn.yaw,
+      pitch: config.spawn.pitch
+    };
+  }
+
+  function sendPlayerStatusPackets(client, playerStatus) {
+    writePlayPacket(client, 'update_time', server.worldTimeState);
+    writePlayPacket(client, 'update_health', playerStatus.health);
+    writePlayPacket(client, 'experience', playerStatus.experience);
+  }
+
+  function finalizeClientWorldState(client, playerStatus) {
+    client.worldStateReady = true;
+    sendPlayerStatusPackets(client, playerStatus);
+  }
+
   function saveWorld() {
     saveWorldState(config.worldSavePath, world.serialize());
   }
+
+  const itemDropManager = createItemDropManager({
+    connectedClients,
+    mcData,
+    sendInventorySlotUpdate,
+    writePlayPacket
+  });
+  server._ragecraftCleanupHandlers.push(() => itemDropManager.cleanup());
 
   function sendInventoryBootstrap(client) {
     if (!client.inventoryState) {
@@ -154,10 +275,101 @@ function createMinecraftServer(overrides = {}) {
     });
   }
 
+  function getChunkPosition(position = {}) {
+    return {
+      chunkX: Math.floor((position.x ?? 0) / 16),
+      chunkZ: Math.floor((position.z ?? 0) / 16)
+    };
+  }
+
+  function syncClientChunks(client, force = false) {
+    if (!client.playerPosition) {
+      return;
+    }
+
+    const radius = world.streamRadius;
+    const currentChunk = getChunkPosition(client.playerPosition);
+    const desiredChunkKeys = new Set();
+
+    if (!client.loadedChunkKeys) {
+      client.loadedChunkKeys = new Set();
+    }
+
+    if (
+      force ||
+      !client.chunkCenter ||
+      client.chunkCenter.chunkX !== currentChunk.chunkX ||
+      client.chunkCenter.chunkZ !== currentChunk.chunkZ
+    ) {
+      client.chunkCenter = currentChunk;
+      writePlayPacket(client, 'update_view_position', currentChunk);
+    }
+
+    for (let dz = -radius; dz <= radius; dz++) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        const chunkX = currentChunk.chunkX + dx;
+        const chunkZ = currentChunk.chunkZ + dz;
+        const chunkKey = `${chunkX},${chunkZ}`;
+        desiredChunkKeys.add(chunkKey);
+
+        if (!force && client.loadedChunkKeys.has(chunkKey)) {
+          continue;
+        }
+
+        const chunkPacket = world.getChunkPacket(chunkX, chunkZ);
+        writePlayPacket(client, 'map_chunk', chunkPacket);
+        writePlayPacket(client, 'update_light', createLightUpdatePacket(chunkPacket));
+        client.loadedChunkKeys.add(chunkKey);
+      }
+    }
+
+    for (const chunkKey of Array.from(client.loadedChunkKeys)) {
+      if (desiredChunkKeys.has(chunkKey)) {
+        continue;
+      }
+
+      const [chunkX, chunkZ] = chunkKey.split(',').map(Number);
+      writePlayPacket(client, 'unload_chunk', {
+        chunkX,
+        chunkZ
+      });
+      client.loadedChunkKeys.delete(chunkKey);
+    }
+  }
+
+  function respawnPlayer(client) {
+    const safeSpawn = world.getSafeSpawnPosition(config.spawn);
+    const teleportId = allocateTeleportId(client);
+
+    itemDropManager.setClientPosition(client, safeSpawn);
+    client.loadedChunkKeys = new Set();
+    client.chunkCenter = null;
+    client.worldStateReady = false;
+
+    if (client.playerState) {
+      client.playerState.pendingTeleportId = teleportId;
+    }
+
+    writePlayPacket(client, 'respawn', {
+      ...buildRespawnPacket(loginPacket, world)
+    });
+    writePlayPacket(client, 'spawn_position', createSpawnPositionPacket(safeSpawn));
+    syncClientChunks(client, true);
+    writePositionPacket(client, buildPositionPacket(safeSpawn, teleportId));
+    finalizeClientWorldState(client, client.playerStatus);
+  }
+
   function initializePlayer(client) {
     const address = `${client.socket.remoteAddress}:${client.socket.remotePort}`;
-    client.inventoryState = createPlayerInventory(mcData);
     const bootstrapPackets = buildPlayerBootstrapPackets(client, config, world, loginPacket);
+    client.inventoryState = createPlayerInventory(mcData);
+    client.playerState = createPlayerState(bootstrapPackets.position.teleportId);
+    client.playerStatus = bootstrapPackets.playerStatus;
+    client.nextTeleportId = 1;
+    client.worldStateReady = false;
+    itemDropManager.setClientPosition(client, bootstrapPackets.position);
+    client.loadedChunkKeys = new Set();
+    client.chunkCenter = null;
 
     console.log(`[join] ${client.username} (${address})`);
 
@@ -166,32 +378,20 @@ function createMinecraftServer(overrides = {}) {
       broadcastSystemMessage(`${client.username} left the game.`, client);
     });
 
-    if (is2612Compatibility(server)) {
-      writeCompatibilityLoginPacket(client, server, bootstrapPackets.login);
-    } else {
-      client.write('login', bootstrapPackets.login);
-    }
+    writeLoginPacket(client, bootstrapPackets.login);
 
     writePlayPacket(client, 'initialize_world_border', bootstrapPackets.border);
     writePlayPacket(client, 'update_view_distance', bootstrapPackets.viewDistance);
     writePlayPacket(client, 'simulation_distance', bootstrapPackets.simulationDistance);
-    writePlayPacket(client, 'update_view_position', bootstrapPackets.viewPosition);
     writePlayPacket(client, 'spawn_position', bootstrapPackets.spawnPosition);
     writePlayPacket(client, 'abilities', bootstrapPackets.abilities);
     writePlayPacket(client, 'game_state_change', bootstrapPackets.gameStateChange);
-
-    for (const chunk of world.createChunkPackets()) {
-      writePlayPacket(client, 'map_chunk', chunk);
-      writePlayPacket(client, 'update_light', createLightUpdatePacket(chunk));
-    }
-
-    if (is2612Compatibility(server)) {
-      writeCompatibilityPositionPacket(client, server, bootstrapPackets.position);
-    } else {
-      client.write('position', bootstrapPackets.position);
-    }
+    syncClientChunks(client, true);
+    writePositionPacket(client, bootstrapPackets.position);
+    finalizeClientWorldState(client, bootstrapPackets.playerStatus);
 
     sendModifiedBlockBootstrap(client);
+    itemDropManager.sendExistingDrops(client);
 
     sendInventoryBootstrap(client);
 
@@ -227,22 +427,17 @@ function createMinecraftServer(overrides = {}) {
         broadcastAuthoritativeBlockState(packet.location);
 
         if (breakResult.droppedItem) {
-          const pickupResult = addItem(
-            client.inventoryState,
-            mcData,
+          itemDropManager.spawnDrop(
             breakResult.droppedItem.itemId,
-            breakResult.droppedItem.count
+            breakResult.droppedItem.count,
+            breakResult.position
           );
-
-          for (const slot of pickupResult.updatedSlots) {
-            sendInventorySlotUpdate(client, slot);
-          }
         }
 
         return;
       }
 
-      sendAuthoritativeBlockState(client, packet.location);
+      sendDeniedInteractionCorrections(client, [packet.location]);
     };
 
     const handleBlockPlacePacket = (packet) => {
@@ -263,16 +458,64 @@ function createMinecraftServer(overrides = {}) {
         return;
       }
 
-      sendAuthoritativeBlockState(client, packet.location);
-      sendAuthoritativeBlockState(client, placedBlockLocation);
+      sendDeniedInteractionCorrections(client, [packet.location, placedBlockLocation]);
     };
 
     client.on('chat', handleChatPacket);
     client.on('chat_message', handleChatPacket);
     client.on('block_dig', handleBlockDigPacket);
     client.on('block_place', handleBlockPlacePacket);
+    client.on('position', (packet) => {
+      itemDropManager.setClientPosition(client, packet);
+
+      if ((packet.y ?? 0) < VOID_RESPAWN_Y) {
+        respawnPlayer(client);
+        return;
+      }
+
+      syncClientChunks(client);
+      itemDropManager.attemptPickup(client);
+    });
+    client.on('position_look', (packet) => {
+      itemDropManager.setClientPosition(client, packet);
+
+      if ((packet.y ?? 0) < VOID_RESPAWN_Y) {
+        respawnPlayer(client);
+        return;
+      }
+
+      syncClientChunks(client);
+      itemDropManager.attemptPickup(client);
+    });
+    client.on('look', () => {
+      itemDropManager.attemptPickup(client);
+    });
+    client.on('flying', () => {
+      itemDropManager.attemptPickup(client);
+    });
     client.on('held_item_slot', (packet) => {
       setSelectedHotbarSlot(client.inventoryState, extractSelectedSlot(packet));
+    });
+    client.on('teleport_confirm', (packet) => {
+      recordTeleportConfirm(client.playerState, packet);
+    });
+    client.on('abilities', (packet) => {
+      recordRequestedAbilities(client.playerState, packet);
+    });
+    client.on('entity_action', (packet) => {
+      recordEntityAction(client.playerState, packet);
+    });
+    client.on('player_input', (packet) => {
+      recordPlayerInput(client.playerState, packet);
+    });
+    client.on('player_loaded', () => {
+      recordPlayerLoaded(client.playerState);
+    });
+    client.on('arm_animation', (packet) => {
+      recordArmAnimation(client.playerState, packet);
+    });
+    client.on('use_item', (packet) => {
+      recordUseItem(client.playerState, packet);
     });
   }
 
@@ -327,6 +570,24 @@ function createMinecraftServer(overrides = {}) {
     });
   });
 
+  const worldTimeInterval = setInterval(() => {
+    server.worldTimeState = {
+      age: server.worldTimeState.age + WORLD_TIME_TICK_AMOUNT,
+      time: (server.worldTimeState.time + WORLD_TIME_TICK_AMOUNT) % DAY_LENGTH_TICKS,
+      tickDayTime: server.worldTimeState.tickDayTime
+    };
+
+    for (const client of connectedClients()) {
+      if (!client.worldStateReady) {
+        continue;
+      }
+
+      writePlayPacket(client, 'update_time', server.worldTimeState);
+    }
+  }, WORLD_TIME_TICK_INTERVAL_MS);
+  worldTimeInterval.unref?.();
+  server._ragecraftCleanupHandlers.push(() => clearInterval(worldTimeInterval));
+
   server.on('playerJoin', initializePlayer);
   server.on('error', (error) => {
     console.error('[server:error]', error);
@@ -341,6 +602,16 @@ function createMinecraftServer(overrides = {}) {
 
 function closeMinecraftServer(server) {
   return new Promise((resolve, reject) => {
+    if (server?._ragecraftCleanupHandlers) {
+      for (const cleanup of server._ragecraftCleanupHandlers.splice(0)) {
+        try {
+          cleanup();
+        } catch (error) {
+          console.error('[server:cleanup:error]', error);
+        }
+      }
+    }
+
     if (!server || !server.socketServer) {
       resolve();
       return;

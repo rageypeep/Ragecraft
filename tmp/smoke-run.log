@@ -1,0 +1,4 @@
+stage: main start
+stage: server listening
+[join] SmokeTester (127.0.0.1:51412)
+stage: client login

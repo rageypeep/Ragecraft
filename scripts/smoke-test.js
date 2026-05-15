@@ -9,6 +9,8 @@ const {
   getCompatibilityPlayPacketMap,
   rewriteIncomingPlayPacketBuffer
 } = require('../src/compatibility-play');
+const { buildPlayerBootstrapPackets } = require('../src/server/bootstrap');
+const { createChatApi } = require('../src/server/chat');
 const { createPlayerInventory, toProtocolSlot } = require('../src/inventory');
 const { closeMinecraftServer, createMinecraftServer } = require('../src/server');
 const { createInitialWorldPackets } = require('../src/world');
@@ -33,6 +35,34 @@ function waitForPacket(emitter, eventName, predicate, timeoutMs = 5000) {
     }
 
     emitter.on(eventName, onPacket);
+  });
+}
+
+function waitForCondition(predicate, timeoutMs = 5000) {
+  return new Promise((resolve, reject) => {
+    const deadline = Date.now() + timeoutMs;
+
+    function poll() {
+      try {
+        const result = predicate();
+
+        if (result) {
+          resolve(result);
+          return;
+        }
+
+        if (Date.now() >= deadline) {
+          reject(new Error('Timed out waiting for condition.'));
+          return;
+        }
+
+        setTimeout(poll, 10);
+      } catch (error) {
+        reject(error);
+      }
+    }
+
+    poll();
   });
 }
 
@@ -67,6 +97,102 @@ function buildLoginStartPacket(username, playerUuidHex) {
   ]);
   const packet = Buffer.concat([writeVarInt(0x00), payload]);
   return Buffer.concat([writeVarInt(packet.length), packet]);
+}
+
+function createMockMcData(features = {}) {
+  return {
+    supportFeature(name) {
+      return features[name] ?? false;
+    }
+  };
+}
+
+function metadataContainsItem(packet, itemId, count) {
+  return packet.metadata?.some((entry) =>
+    entry.key === 8 &&
+    entry.value?.itemId === itemId &&
+    entry.value?.itemCount === count
+  );
+}
+
+function assertSafeSpawn(world, spawn) {
+  assert.equal(world.getBlockState({ x: spawn.x, y: spawn.y, z: spawn.z }), world.airBlockStateId);
+  assert.equal(world.getBlockState({ x: spawn.x, y: spawn.y + 1, z: spawn.z }), world.airBlockStateId);
+  assert.notEqual(world.getBlockState({ x: spawn.x, y: spawn.y - 1, z: spawn.z }), world.airBlockStateId);
+}
+
+function collectWorldSignature(world, positions) {
+  return positions
+    .map(({ x, y, z }) => `${x},${y},${z}:${world.getBlockState({ x, y, z })}:${world.getBiomeId({ x, y, z })}`)
+    .join('|');
+}
+
+function countUndergroundAir(world, bounds) {
+  let airCount = 0;
+
+  for (let x = bounds.minX; x <= bounds.maxX; x++) {
+    for (let z = bounds.minZ; z <= bounds.maxZ; z++) {
+      for (let y = bounds.minY; y <= bounds.maxY; y++) {
+        if (world.getBlockState({ x, y, z }) === world.airBlockStateId) {
+          airCount += 1;
+        }
+      }
+    }
+  }
+
+  return airCount;
+}
+
+function countMatchingStateIds(world, bounds, stateIds) {
+  const stateIdSet = new Set(stateIds);
+  let count = 0;
+
+  for (let x = bounds.minX; x <= bounds.maxX; x++) {
+    for (let z = bounds.minZ; z <= bounds.maxZ; z++) {
+      for (let y = bounds.minY; y <= bounds.maxY; y++) {
+        if (stateIdSet.has(world.getBlockState({ x, y, z }))) {
+          count += 1;
+        }
+      }
+    }
+  }
+
+  return count;
+}
+
+function testCompatibilityChatFallback() {
+  const calls = [];
+  const firstClient = { id: 1 };
+  const secondClient = { id: 2 };
+  const chatApi = createChatApi({
+    connectedClients(excludeClient = null) {
+      return [firstClient, secondClient].filter((client) => client !== excludeClient);
+    },
+    isCompatibilityActive: () => true,
+    mcData: createMockMcData(),
+    server: {
+      writeToClients(clients, packetName, params) {
+        calls.push({ clients, packetName, params });
+      }
+    },
+    writePacket(client, packetName, params) {
+      calls.push({ client, packetName, params });
+    }
+  });
+
+  chatApi.broadcastSystemMessage('Compatibility hello.', secondClient);
+  chatApi.broadcastPlayerMessage('Foursix', 'hi');
+
+  assert.equal(calls.length, 3);
+  assert.equal(calls[0].packetName, 'system_chat');
+  assert.equal(calls[0].client, firstClient);
+  assert.equal(calls[0].params.content, JSON.stringify({ text: 'Compatibility hello.' }));
+  assert.equal(calls[1].packetName, 'system_chat');
+  assert.equal(calls[1].client, firstClient);
+  assert.equal(calls[1].params.content, JSON.stringify({ text: '<Foursix> hi' }));
+  assert.equal(calls[2].packetName, 'system_chat');
+  assert.equal(calls[2].client, secondClient);
+  assert.equal(calls[2].params.content, JSON.stringify({ text: '<Foursix> hi' }));
 }
 
 async function testExperimental2612Compatibility() {
@@ -130,8 +256,19 @@ async function testExperimental2612Compatibility() {
   assert.equal(compatibilityPlayPacketMap.clientboundPacketIds.login, 49);
   assert.equal(compatibilityPlayPacketMap.clientboundPacketIds.map_chunk, 45);
   assert.equal(compatibilityPlayPacketMap.clientboundPacketIds.abilities, 64);
+  assert.equal(compatibilityPlayPacketMap.clientboundPacketIds.system_chat, 121);
   assert.equal(compatibilityPlayPacketMap.clientboundPacketIds.set_player_inventory, 108);
   assert.equal(compatibilityPlayPacketMap.clientboundPacketIds.held_item_slot, 105);
+  assert.equal(compatibilityPlayPacketMap.clientboundPacketIds.update_time, 113);
+  assert.equal(compatibilityPlayPacketMap.clientboundPacketIds.update_health, 104);
+  assert.equal(compatibilityPlayPacketMap.clientboundPacketIds.experience, 103);
+  assert.equal(compatibilityPlayPacketMap.clientboundPacketIds.respawn, 82);
+  assert.equal(compatibilityPlayPacketMap.serverboundPacketIdRewrites[39], 38);
+  assert.equal(compatibilityPlayPacketMap.serverboundPacketIdRewrites[41], 40);
+  assert.equal(compatibilityPlayPacketMap.serverboundPacketIdRewrites[42], 41);
+  assert.equal(compatibilityPlayPacketMap.serverboundPacketIdRewrites[43], 42);
+  assert.equal(compatibilityPlayPacketMap.serverboundPacketIdRewrites[60], 58);
+  assert.equal(compatibilityPlayPacketMap.serverboundPacketIdRewrites[64], 61);
   assert.equal(compatibilityPlayPacketMap.serverboundPacketIdRewrites[14], 13);
   assert.equal(compatibilityPlayPacketMap.serverboundPacketIdRewrites[28], 27);
 
@@ -231,19 +368,208 @@ async function testExperimental2612Compatibility() {
   const world = createInitialWorldPackets(compatibilityBaseData, {
     spawn: { x: 0, y: 96, z: 0, yaw: 0, pitch: 0 }
   });
+  const worldSafeSpawn = world.getSafeSpawnPosition({ x: 0, y: 96, z: 0 });
+  const worldSurfaceBlockLocation = {
+    x: worldSafeSpawn.x,
+    y: worldSafeSpawn.y - 1,
+    z: worldSafeSpawn.z
+  };
   assert.equal(world.surfaceY, 95);
   assert.equal(world.chunks.length, 25);
-  assert.equal(world.getBlockState({ x: 0, y: 95, z: 0 }), compatibilityBaseData.blocksByName.grass_block.defaultState);
-  assert.equal(world.getBlockState({ x: 0, y: 94, z: 0 }), compatibilityBaseData.blocksByName.dirt.defaultState);
-  assert.equal(world.getBlockState({ x: 0, y: 96, z: 0 }), compatibilityBaseData.blocksByName.air.defaultState);
-  assert.deepEqual(
-    world.resolvePlacedBlockLocation({ x: 0, y: 95, z: 0 }, 1),
-    { x: 0, y: 96, z: 0 }
+  assert.equal(world.getBlockState(worldSurfaceBlockLocation), compatibilityBaseData.blocksByName.grass_block.defaultState);
+  assert.notEqual(
+    world.getBlockState({ x: worldSurfaceBlockLocation.x, y: worldSurfaceBlockLocation.y - 1, z: worldSurfaceBlockLocation.z }),
+    compatibilityBaseData.blocksByName.air.defaultState
   );
-  assert.equal(world.placeBlock({ x: 0, y: 96, z: 0 }), true);
-  assert.equal(world.getBlockState({ x: 0, y: 96, z: 0 }), compatibilityBaseData.blocksByName.grass_block.defaultState);
-  assert.equal(world.breakBlock({ x: 0, y: 96, z: 0 }).droppedItem.itemId, compatibilityBaseData.itemsByName.dirt.id);
-  assert.equal(world.getBlockState({ x: 0, y: 96, z: 0 }), compatibilityBaseData.blocksByName.air.defaultState);
+  assert.equal(world.getBlockState(worldSafeSpawn), compatibilityBaseData.blocksByName.air.defaultState);
+  assert(Number.isInteger(world.getBiomeId(worldSurfaceBlockLocation)));
+  const sampledBiomeIds = new Set();
+  let treeLogCount = 0;
+  const treeLogStateIds = new Set([
+    world.treeBlockStateIds.oakLog,
+    world.treeBlockStateIds.birchLog
+  ]);
+
+  for (let x = -192; x <= 192; x += 8) {
+    for (let z = -192; z <= 192; z += 8) {
+      sampledBiomeIds.add(world.getBiomeId({ x, y: world.surfaceY, z }));
+    }
+  }
+
+  for (let x = -48; x <= 48; x++) {
+    for (let z = -48; z <= 48; z++) {
+      for (let y = world.surfaceY + 1; y <= world.surfaceY + 12; y++) {
+        if (treeLogStateIds.has(world.getBlockState({ x, y, z }))) {
+          treeLogCount += 1;
+        }
+      }
+    }
+  }
+
+  assert(sampledBiomeIds.size >= 3);
+  assert(treeLogCount > 0);
+  assert.deepEqual(
+    world.resolvePlacedBlockLocation(
+      {
+        x: worldSurfaceBlockLocation.x,
+        y: worldSurfaceBlockLocation.y,
+        z: worldSurfaceBlockLocation.z
+      },
+      1
+    ),
+    worldSafeSpawn
+  );
+  assert.equal(world.placeBlock(worldSafeSpawn), true);
+  assert.equal(world.getBlockState(worldSafeSpawn), compatibilityBaseData.blocksByName.grass_block.defaultState);
+  assert.equal(world.breakBlock(worldSafeSpawn).droppedItem.itemId, compatibilityBaseData.itemsByName.dirt.id);
+  assert.equal(world.getBlockState(worldSafeSpawn), compatibilityBaseData.blocksByName.air.defaultState);
+  const obstructedSpawnWorld = createInitialWorldPackets(compatibilityBaseData, {
+    spawn: { x: 0, y: 96, z: 0, yaw: 0, pitch: 0 }
+  });
+  obstructedSpawnWorld.placeBlock({ x: 0, y: 96, z: 0 }, compatibilityBaseData.blocksByName.stone.defaultState);
+  obstructedSpawnWorld.placeBlock({ x: 0, y: 97, z: 0 }, compatibilityBaseData.blocksByName.stone.defaultState);
+  const safeSpawn = obstructedSpawnWorld.getSafeSpawnPosition({ x: 0, y: 96, z: 0 });
+  assertSafeSpawn(obstructedSpawnWorld, safeSpawn);
+  const bootstrapPackets = buildPlayerBootstrapPackets(
+    { id: 99 },
+    {
+      maxPlayers: 20,
+      viewDistance: 10,
+      spawn: { x: 0, y: 96, z: 0, yaw: 90, pitch: 15 }
+    },
+    obstructedSpawnWorld,
+    compatibilityBaseData.loginPacket
+  );
+  assert.deepEqual(
+    { x: bootstrapPackets.position.x, y: bootstrapPackets.position.y, z: bootstrapPackets.position.z },
+    safeSpawn
+  );
+
+  const configuredWorld = createInitialWorldPackets(compatibilityBaseData, {
+    spawn: { x: 0, y: 96, z: 0, yaw: 0, pitch: 0 },
+    viewDistance: 7,
+    world: {
+      mixedBiomes: false,
+      seed: 'alpha-seed',
+      chunkRadius: 1,
+      streamRadius: 6,
+      surfaceBlock: 'stone',
+      soilBlock: 'dirt',
+      foundationBlock: 'oak_log',
+      terrainThickness: 8
+    }
+  });
+  assert.equal(configuredWorld.chunks.length, 9);
+  assert.equal(configuredWorld.topBlockStateId, compatibilityBaseData.blocksByName.stone.defaultState);
+  assert.equal(configuredWorld.foundationBlockStateId, compatibilityBaseData.blocksByName.oak_log.defaultState);
+  assert.equal(configuredWorld.terrainThickness, 8);
+  assert.equal(configuredWorld.streamRadius, 6);
+  assert.equal(configuredWorld.seed, 'alpha-seed');
+  assert.equal(configuredWorld.getChunkPacket(5, -3).x, 5);
+  assert.equal(configuredWorld.getChunkPacket(5, -3).z, -3);
+
+  const repeatSeedWorld = createInitialWorldPackets(compatibilityBaseData, {
+    spawn: { x: 0, y: 96, z: 0, yaw: 0, pitch: 0 },
+    world: {
+      mixedBiomes: false,
+      seed: 'alpha-seed',
+      chunkRadius: 1,
+      streamRadius: 6,
+      surfaceBlock: 'stone',
+      soilBlock: 'dirt',
+      foundationBlock: 'oak_log',
+      terrainThickness: 8
+    }
+  });
+  const differentSeedWorld = createInitialWorldPackets(compatibilityBaseData, {
+    spawn: { x: 0, y: 96, z: 0, yaw: 0, pitch: 0 },
+    world: {
+      mixedBiomes: false,
+      seed: 'beta-seed',
+      chunkRadius: 1,
+      streamRadius: 6,
+      surfaceBlock: 'stone',
+      soilBlock: 'dirt',
+      foundationBlock: 'oak_log',
+      terrainThickness: 8
+    }
+  });
+  const seedSamplePositions = [];
+
+  for (let x = -40; x <= 40; x += 8) {
+    for (let z = -40; z <= 40; z += 8) {
+      seedSamplePositions.push({ x, y: configuredWorld.surfaceY - 2, z });
+      seedSamplePositions.push({ x, y: configuredWorld.surfaceY + 3, z });
+    }
+  }
+
+  const configuredSignature = collectWorldSignature(configuredWorld, seedSamplePositions);
+  const repeatSeedSignature = collectWorldSignature(repeatSeedWorld, seedSamplePositions);
+  const differentSeedSignature = collectWorldSignature(differentSeedWorld, seedSamplePositions);
+  assert.equal(configuredSignature, repeatSeedSignature);
+  assert.notEqual(configuredSignature, differentSeedSignature);
+
+  const undergroundAirCount = countUndergroundAir(configuredWorld, {
+    minX: -96,
+    maxX: 96,
+    minY: configuredWorld.floorStartY + 2,
+    maxY: configuredWorld.surfaceY - 5,
+    minZ: -96,
+    maxZ: 96
+  });
+  assert(undergroundAirCount > 0);
+
+  const decoratedWorld = createInitialWorldPackets(compatibilityBaseData, {
+    spawn: { x: 0, y: 96, z: 0, yaw: 0, pitch: 0 },
+    world: {
+      seed: 'terrain-variety'
+    }
+  });
+  const surfacePaletteCount = countMatchingStateIds(decoratedWorld, {
+    minX: -192,
+    maxX: 192,
+    minY: decoratedWorld.surfaceY - 4,
+    maxY: decoratedWorld.surfaceY + 2,
+    minZ: -192,
+    maxZ: 192
+  }, decoratedWorld.surfacePaletteStateIds);
+  const waterCount = countMatchingStateIds(decoratedWorld, {
+    minX: -192,
+    maxX: 192,
+    minY: decoratedWorld.surfaceY - 4,
+    maxY: decoratedWorld.surfaceY + 1,
+    minZ: -192,
+    maxZ: 192
+  }, [decoratedWorld.waterBlockStateId]);
+  const undergroundVariantCount = countMatchingStateIds(decoratedWorld, {
+    minX: -192,
+    maxX: 192,
+    minY: decoratedWorld.floorStartY,
+    maxY: decoratedWorld.surfaceY - 3,
+    minZ: -192,
+    maxZ: 192
+  }, decoratedWorld.undergroundVariantStateIds);
+  const oreCount = countMatchingStateIds(decoratedWorld, {
+    minX: -192,
+    maxX: 192,
+    minY: decoratedWorld.floorStartY,
+    maxY: decoratedWorld.surfaceY - 3,
+    minZ: -192,
+    maxZ: 192
+  }, decoratedWorld.oreBlockStateIds);
+  const decorationCount = countMatchingStateIds(decoratedWorld, {
+    minX: -192,
+    maxX: 192,
+    minY: decoratedWorld.surfaceY,
+    maxY: decoratedWorld.surfaceY + 2,
+    minZ: -192,
+    maxZ: 192
+  }, decoratedWorld.decorationStateIds);
+  assert(surfacePaletteCount > 0);
+  assert(waterCount > 0);
+  assert(undergroundVariantCount > 0);
+  assert(oreCount > 0);
+  assert(decorationCount > 0);
 
   const compatibilityMapChunkPacket = buildCompatibilityPlayPacket(
     server.protocolDataVersion,
@@ -287,6 +613,54 @@ async function testExperimental2612Compatibility() {
     server.advertisedVersion
   );
   assert.equal(readVarInt(compatibilityGameEventPacket, 0)?.value, 38);
+
+  const compatibilityTimeUpdatePacket = buildCompatibilityPlayPacket(
+    server.protocolDataVersion,
+    'update_time',
+    {
+      age: 0n,
+      time: 1000n,
+      tickDayTime: true
+    },
+    server.advertisedVersion
+  );
+  assert.equal(readVarInt(compatibilityTimeUpdatePacket, 0)?.value, 113);
+  assert.equal(compatibilityTimeUpdatePacket.length, 10);
+
+  const compatibilityHealthPacket = buildCompatibilityPlayPacket(
+    server.protocolDataVersion,
+    'update_health',
+    {
+      health: 20,
+      food: 20,
+      foodSaturation: 5
+    },
+    server.advertisedVersion
+  );
+  assert.equal(readVarInt(compatibilityHealthPacket, 0)?.value, 104);
+
+  const compatibilityExperiencePacket = buildCompatibilityPlayPacket(
+    server.protocolDataVersion,
+    'experience',
+    {
+      experienceBar: 0,
+      level: 0,
+      totalExperience: 0
+    },
+    server.advertisedVersion
+  );
+  assert.equal(readVarInt(compatibilityExperiencePacket, 0)?.value, 103);
+
+  const compatibilityRespawnPacket = buildCompatibilityPlayPacket(
+    server.protocolDataVersion,
+    'respawn',
+    {
+      worldState: compatibilityBaseData.loginPacket.worldState,
+      copyMetadata: 0
+    },
+    server.advertisedVersion
+  );
+  assert.equal(readVarInt(compatibilityRespawnPacket, 0)?.value, 82);
 
   const compatibilityLightUpdatePacket = buildCompatibilityPlayPacket(
     server.protocolDataVersion,
@@ -388,7 +762,10 @@ async function main() {
     port,
     version: '1.21.11',
     motd: 'Smoke Test Server',
-    worldSavePath
+    worldSavePath,
+    world: {
+      streamRadius: 2
+    }
   });
 
   await once(server, 'listening');
@@ -421,10 +798,106 @@ async function main() {
     'held_item_slot',
     (packet) => packet.slot === 0
   );
+  const bootstrapTimePromise = waitForPacket(
+    client,
+    'update_time',
+    (packet) =>
+      packet &&
+      Object.hasOwn(packet, 'age') &&
+      Object.hasOwn(packet, 'time') &&
+      typeof packet.tickDayTime === 'boolean'
+  );
+  const bootstrapHealthPromise = waitForPacket(
+    client,
+    'update_health',
+    (packet) => packet.health === 20 && packet.food === 20 && packet.foodSaturation === 5
+  );
+  const bootstrapExperiencePromise = waitForPacket(
+    client,
+    'experience',
+    (packet) => packet.experienceBar === 0 && packet.level === 0 && packet.totalExperience === 0
+  );
 
   await once(client, 'login');
   await bootstrapInventoryPromise;
   await bootstrapHeldSlotPromise;
+  await bootstrapTimePromise;
+  await bootstrapHealthPromise;
+  await bootstrapExperiencePromise;
+
+  const serverClient = Object.values(server.clients)[0];
+  assert(serverClient?.playerState);
+  assert.equal(serverClient.playerState.pendingTeleportId, 0);
+  const activeSpawn = server.world.getSafeSpawnPosition({ x: 0, y: 96, z: 0 });
+  const minedBlockLocation = {
+    x: activeSpawn.x,
+    y: activeSpawn.y - 1,
+    z: activeSpawn.z
+  };
+  const placementSupportLocation = {
+    x: activeSpawn.x,
+    y: activeSpawn.y - 2,
+    z: activeSpawn.z
+  };
+  const initialBreakStateId = server.world.getBlockState(minedBlockLocation);
+  const initialBreakDropItemId = baseData.blocksByStateId[initialBreakStateId]?.drops?.[0] ?? null;
+  assert(Number.isInteger(initialBreakDropItemId));
+
+  client.write('teleport_confirm', {
+    teleportId: 0
+  });
+  client.write('abilities', {
+    flags: 0x02
+  });
+  client.write('entity_action', {
+    entityId: serverClient.id,
+    actionId: 'start_sprinting',
+    jumpBoost: 0
+  });
+  client.write('player_input', {
+    inputs: {
+      forward: true,
+      backward: false,
+      left: false,
+      right: true,
+      jump: true,
+      shift: false,
+      sprint: true
+    }
+  });
+  client.write('player_loaded', {});
+  client.write('arm_animation', {
+    hand: 0
+  });
+  client.write('use_item', {
+    hand: 0,
+    sequence: 40,
+    rotation: {
+      x: 1.5,
+      y: -2.5
+    }
+  });
+
+  await waitForCondition(() =>
+    serverClient.playerState.lastConfirmedTeleportId === 0 &&
+    serverClient.playerState.teleportConfirmCount === 1 &&
+    serverClient.playerState.pendingTeleportId === null &&
+    serverClient.playerState.abilities.isFlying === true &&
+    serverClient.playerState.entityAction.sprinting === true &&
+    serverClient.playerState.entityAction.lastAction === 'start_sprinting' &&
+    serverClient.playerState.playerInput.forward === true &&
+    serverClient.playerState.playerInput.right === true &&
+    serverClient.playerState.playerInput.jump === true &&
+    serverClient.playerState.playerInput.sprint === true &&
+    serverClient.playerState.loaded === true &&
+    serverClient.playerState.loadCount === 1 &&
+    serverClient.playerState.hand.lastSwingHand === 0 &&
+    serverClient.playerState.hand.swingCount === 1 &&
+    serverClient.playerState.hand.lastUseItemHand === 0 &&
+    serverClient.playerState.hand.lastUseItemSequence === 40 &&
+    serverClient.playerState.hand.lastUseItemRotation?.x === 1.5 &&
+    serverClient.playerState.hand.lastUseItemRotation?.y === -2.5
+  );
 
   const digAckPromise = waitForPacket(
     client,
@@ -434,21 +907,59 @@ async function main() {
   const digCorrectionPromise = waitForPacket(
     client,
     'block_change',
-    (packet) => packet.location.x === 0 && packet.location.y === 95 && packet.location.z === 0
+    (packet) =>
+      packet.location.x === minedBlockLocation.x &&
+      packet.location.y === minedBlockLocation.y &&
+      packet.location.z === minedBlockLocation.z
+  );
+  const initialDropSpawnPromise = waitForPacket(
+    client,
+    'spawn_entity',
+    (packet) => packet.type === baseData.entitiesByName.item.id
+  );
+  const initialDropMetadataPromise = waitForPacket(
+    client,
+    'entity_metadata',
+    (packet) => metadataContainsItem(packet, initialBreakDropItemId, 1)
   );
 
   client.write('block_dig', {
     status: 0,
-    location: { x: 0, y: 95, z: 0 },
+    location: minedBlockLocation,
     face: 1,
     sequence: 41
   });
 
   const digAck = await digAckPromise;
   const digCorrection = await digCorrectionPromise;
+  const initialDropSpawn = await initialDropSpawnPromise;
+  await initialDropMetadataPromise;
   assert.equal(digAck.sequenceId, 41);
   assert.equal(digCorrection.type, baseData.blocksByName.air.defaultState);
-  assert.equal(server.world.getBlockState({ x: 0, y: 95, z: 0 }), baseData.blocksByName.air.defaultState);
+  assert.equal(server.world.getBlockState(minedBlockLocation), baseData.blocksByName.air.defaultState);
+
+  const initialCollectPromise = waitForPacket(
+    client,
+    'collect',
+    (packet) => packet.collectedEntityId === initialDropSpawn.entityId && packet.pickupItemCount === 1
+  );
+  const initialDestroyPromise = waitForPacket(
+    client,
+    'entity_destroy',
+    (packet) => packet.entityIds.includes(initialDropSpawn.entityId)
+  );
+  const initialPickupInventoryUpdatePromise = waitForPacket(
+    client,
+    'set_player_inventory',
+    (packet) =>
+      packet.slotId === 4 &&
+      packet.contents.itemId === initialBreakDropItemId &&
+      packet.contents.itemCount === 1
+  );
+
+  await initialCollectPromise;
+  await initialDestroyPromise;
+  await initialPickupInventoryUpdatePromise;
 
   const placeAckPromise = waitForPacket(
     client,
@@ -466,7 +977,10 @@ async function main() {
   const placeCorrectionPromise = waitForPacket(
     client,
     'block_change',
-    (packet) => packet.location.x === 0 && packet.location.y === 95 && packet.location.z === 0
+    (packet) =>
+      packet.location.x === minedBlockLocation.x &&
+      packet.location.y === minedBlockLocation.y &&
+      packet.location.z === minedBlockLocation.z
   );
 
   client.write('held_item_slot', {
@@ -475,7 +989,7 @@ async function main() {
 
   client.write('block_place', {
     hand: 0,
-    location: { x: 0, y: 94, z: 0 },
+    location: placementSupportLocation,
     direction: 1,
     cursorX: 0.5,
     cursorY: 1,
@@ -490,12 +1004,56 @@ async function main() {
   const placeCorrection = await placeCorrectionPromise;
   assert.equal(placeAck.sequenceId, 42);
   assert.equal(placeCorrection.type, baseData.blocksByName.dirt.defaultState);
-  assert.equal(server.world.getBlockState({ x: 0, y: 95, z: 0 }), baseData.blocksByName.dirt.defaultState);
+  assert.equal(server.world.getBlockState(minedBlockLocation), baseData.blocksByName.dirt.defaultState);
 
   const pickupAckPromise = waitForPacket(
     client,
     'acknowledge_player_digging',
     (packet) => packet.sequenceId === 43
+  );
+  const pickupDropSpawnPromise = waitForPacket(
+    client,
+    'spawn_entity',
+    (packet) => packet.type === baseData.entitiesByName.item.id
+  );
+  const pickupDropMetadataPromise = waitForPacket(
+    client,
+    'entity_metadata',
+    (packet) => metadataContainsItem(packet, baseData.itemsByName.dirt.id, 1)
+  );
+  const pickupCorrectionPromise = waitForPacket(
+    client,
+    'block_change',
+    (packet) =>
+      packet.location.x === minedBlockLocation.x &&
+      packet.location.y === minedBlockLocation.y &&
+      packet.location.z === minedBlockLocation.z
+  );
+
+  client.write('block_dig', {
+    status: 0,
+    location: minedBlockLocation,
+    face: 1,
+    sequence: 43
+  });
+
+  const pickupAck = await pickupAckPromise;
+  const pickupDropSpawn = await pickupDropSpawnPromise;
+  await pickupDropMetadataPromise;
+  const pickupCorrection = await pickupCorrectionPromise;
+  assert.equal(pickupAck.sequenceId, 43);
+  assert.equal(pickupCorrection.type, baseData.blocksByName.air.defaultState);
+  assert.equal(server.world.getBlockState(minedBlockLocation), baseData.blocksByName.air.defaultState);
+
+  const pickupCollectPromise = waitForPacket(
+    client,
+    'collect',
+    (packet) => packet.collectedEntityId === pickupDropSpawn.entityId && packet.pickupItemCount === 1
+  );
+  const pickupDestroyPromise = waitForPacket(
+    client,
+    'entity_destroy',
+    (packet) => packet.entityIds.includes(pickupDropSpawn.entityId)
   );
   const pickupInventoryUpdatePromise = waitForPacket(
     client,
@@ -505,25 +1063,10 @@ async function main() {
       packet.contents.itemId === baseData.itemsByName.dirt.id &&
       packet.contents.itemCount === 64
   );
-  const pickupCorrectionPromise = waitForPacket(
-    client,
-    'block_change',
-    (packet) => packet.location.x === 0 && packet.location.y === 95 && packet.location.z === 0
-  );
 
-  client.write('block_dig', {
-    status: 0,
-    location: { x: 0, y: 95, z: 0 },
-    face: 1,
-    sequence: 43
-  });
-
-  const pickupAck = await pickupAckPromise;
+  await pickupCollectPromise;
+  await pickupDestroyPromise;
   await pickupInventoryUpdatePromise;
-  const pickupCorrection = await pickupCorrectionPromise;
-  assert.equal(pickupAck.sequenceId, 43);
-  assert.equal(pickupCorrection.type, baseData.blocksByName.air.defaultState);
-  assert.equal(server.world.getBlockState({ x: 0, y: 95, z: 0 }), baseData.blocksByName.air.defaultState);
 
   const stoneAckPromise = waitForPacket(
     client,
@@ -541,7 +1084,10 @@ async function main() {
   const stoneCorrectionPromise = waitForPacket(
     client,
     'block_change',
-    (packet) => packet.location.x === 0 && packet.location.y === 95 && packet.location.z === 0
+    (packet) =>
+      packet.location.x === minedBlockLocation.x &&
+      packet.location.y === minedBlockLocation.y &&
+      packet.location.z === minedBlockLocation.z
   );
 
   client.write('held_item_slot', {
@@ -550,7 +1096,7 @@ async function main() {
 
   client.write('block_place', {
     hand: 0,
-    location: { x: 0, y: 94, z: 0 },
+    location: placementSupportLocation,
     direction: 1,
     cursorX: 0.5,
     cursorY: 1,
@@ -565,9 +1111,150 @@ async function main() {
   const stoneCorrection = await stoneCorrectionPromise;
   assert.equal(stoneAck.sequenceId, 44);
   assert.equal(stoneCorrection.type, baseData.blocksByName.stone.defaultState);
-  assert.equal(server.world.getBlockState({ x: 0, y: 95, z: 0 }), baseData.blocksByName.stone.defaultState);
+  assert.equal(server.world.getBlockState(minedBlockLocation), baseData.blocksByName.stone.defaultState);
+
+  const deniedDigAckPromise = waitForPacket(
+    client,
+    'acknowledge_player_digging',
+    (packet) => packet.sequenceId === 45
+  );
+  const deniedDigCorrectionPromise = waitForPacket(
+    client,
+    'block_change',
+    (packet) =>
+      packet.location.x === minedBlockLocation.x &&
+      packet.location.y === minedBlockLocation.y &&
+      packet.location.z === minedBlockLocation.z &&
+      packet.type === baseData.blocksByName.stone.defaultState
+  );
+
+  client.write('block_dig', {
+    status: 1,
+    location: minedBlockLocation,
+    face: 1,
+    sequence: 45
+  });
+
+  const deniedDigAck = await deniedDigAckPromise;
+  const deniedDigCorrection = await deniedDigCorrectionPromise;
+  assert.equal(deniedDigAck.sequenceId, 45);
+  assert.equal(deniedDigCorrection.type, baseData.blocksByName.stone.defaultState);
+  assert.equal(server.world.getBlockState(minedBlockLocation), baseData.blocksByName.stone.defaultState);
+
+  client.write('held_item_slot', {
+    slotId: 3
+  });
+
+  const deniedPlaceAckPromise = waitForPacket(
+    client,
+    'acknowledge_player_digging',
+    (packet) => packet.sequenceId === 46
+  );
+  const deniedPlaceTargetCorrectionPromise = waitForPacket(
+    client,
+    'block_change',
+    (packet) =>
+      packet.location.x === minedBlockLocation.x &&
+      packet.location.y === minedBlockLocation.y &&
+      packet.location.z === minedBlockLocation.z &&
+      packet.type === baseData.blocksByName.stone.defaultState
+  );
+
+  client.write('block_place', {
+    hand: 0,
+    location: placementSupportLocation,
+    direction: 1,
+    cursorX: 0.5,
+    cursorY: 1,
+    cursorZ: 0.5,
+    insideBlock: false,
+    worldBorderHit: false,
+    sequence: 46
+  });
+
+  const deniedPlaceAck = await deniedPlaceAckPromise;
+  const deniedPlaceTargetCorrection = await deniedPlaceTargetCorrectionPromise;
+  assert.equal(deniedPlaceAck.sequenceId, 46);
+  assert.equal(deniedPlaceTargetCorrection.type, baseData.blocksByName.stone.defaultState);
+  assert.equal(server.world.getBlockState(minedBlockLocation), baseData.blocksByName.stone.defaultState);
+  assert.equal(Object.values(server.clients)[0].inventoryState.hotbar[3].count, 32);
+
+  const streamedChunkPromise = waitForPacket(
+    client,
+    'map_chunk',
+    (packet) => packet.x === 8 && packet.z === 0
+  );
+  const unloadChunkPromise = waitForPacket(
+    client,
+    'unload_chunk',
+    (packet) => packet.chunkX === -2 && packet.chunkZ === -2
+  );
+  const viewCenterPromise = waitForPacket(
+    client,
+    'update_view_position',
+    (packet) => packet.chunkX === 6 && packet.chunkZ === 0
+  );
+
+  client.write('position', {
+    x: 96,
+    y: 96,
+    z: 0,
+    flags: {
+      onGround: true,
+      hasHorizontalCollision: false
+    }
+  });
+
+  const streamedChunk = await streamedChunkPromise;
+  const unloadedChunk = await unloadChunkPromise;
+  const newViewCenter = await viewCenterPromise;
+  assert.equal(streamedChunk.x, 8);
+  assert.equal(unloadedChunk.chunkX, -2);
+  assert.equal(unloadedChunk.chunkZ, -2);
+  assert.equal(newViewCenter.chunkX, 6);
+  assert.equal(newViewCenter.chunkZ, 0);
+
+  const respawnPacketPromise = waitForPacket(
+    client,
+    'respawn',
+    () => true
+  );
+  const respawnPositionPromise = waitForPacket(
+    client,
+    'position',
+    (packet) => packet.teleportId === 1 && packet.y === server.world.getSafeSpawnPosition({ x: 0, y: 96, z: 0 }).y
+  );
+  const respawnTimePromise = waitForPacket(
+    client,
+    'update_time',
+    (packet) => packet && Object.hasOwn(packet, 'age')
+  );
+
+  client.write('position', {
+    x: 96,
+    y: -80,
+    z: 0,
+    flags: {
+      onGround: false,
+      hasHorizontalCollision: false
+    }
+  });
+
+  const respawnPacket = await respawnPacketPromise;
+  const respawnPosition = await respawnPositionPromise;
+  await respawnTimePromise;
+  assert.equal(respawnPacket.copyMetadata, 0);
+  assert.equal(respawnPosition.teleportId, 1);
+  assert.equal(serverClient.playerState.pendingTeleportId, 1);
+
+  client.write('teleport_confirm', {
+    teleportId: 1
+  });
+
+  await waitForCondition(() => serverClient.playerState.lastConfirmedTeleportId === 1);
 
   client.end('smoke test complete');
+  await once(client, 'end');
 
   await closeMinecraftServer(server);
 
@@ -576,11 +1263,14 @@ async function main() {
     port: 25573,
     version: '1.21.11',
     motd: 'Reloaded Smoke Test Server',
-    worldSavePath
+    worldSavePath,
+    world: {
+      streamRadius: 2
+    }
   });
   await once(reloadedServer, 'listening');
   assert.equal(
-    reloadedServer.world.getBlockState({ x: 0, y: 95, z: 0 }),
+    reloadedServer.world.getBlockState(minedBlockLocation),
     baseData.blocksByName.stone.defaultState
   );
   await closeMinecraftServer(reloadedServer);
@@ -593,9 +1283,11 @@ async function main() {
   await once(defaultServer, 'listening');
   assert.equal(defaultServer.requestedVersion, '26.1.2');
   assert.equal(defaultServer.advertisedVersion, '26.1.2');
+  assert.equal(defaultServer.world.streamRadius, 10);
   await closeMinecraftServer(defaultServer);
 
   await testExperimental2612Compatibility();
+  testCompatibilityChatFallback();
   fs.rmSync(tempDataDir, { recursive: true, force: true });
   console.log('Smoke test passed.');
 }

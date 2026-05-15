@@ -10,6 +10,18 @@ const DEFAULTS = {
   isFlat: false,
   worldSavePath: 'data/world.json',
   welcomeMessage: 'Welcome to Ragecraft, {username}.',
+  world: {
+    biome: 'plains',
+    mixedBiomes: true,
+    seed: 'ragecraft',
+    chunkRadius: 2,
+    streamRadius: null,
+    foundationBlock: 'stone',
+    soilBlock: 'dirt',
+    surfaceBlock: 'grass_block',
+    terrainAmplitude: 4,
+    terrainThickness: 12
+  },
   spawn: {
     x: 0,
     y: 96,
@@ -54,6 +66,21 @@ function readBoolean(name, fallback) {
 }
 
 function loadConfig(overrides = {}) {
+  const mergedWorld = {
+    biome: process.env.MC_WORLD_BIOME ?? DEFAULTS.world.biome,
+    mixedBiomes: readBoolean('MC_WORLD_MIXED_BIOMES', DEFAULTS.world.mixedBiomes),
+    seed: process.env.MC_WORLD_SEED ?? DEFAULTS.world.seed,
+    chunkRadius: readNumber('MC_WORLD_CHUNK_RADIUS', DEFAULTS.world.chunkRadius),
+    streamRadius: process.env.MC_WORLD_STREAM_RADIUS === undefined
+      ? DEFAULTS.world.streamRadius
+      : readNumber('MC_WORLD_STREAM_RADIUS', DEFAULTS.viewDistance),
+    foundationBlock: process.env.MC_FOUNDATION_BLOCK ?? DEFAULTS.world.foundationBlock,
+    soilBlock: process.env.MC_SOIL_BLOCK ?? DEFAULTS.world.soilBlock,
+    surfaceBlock: process.env.MC_SURFACE_BLOCK ?? DEFAULTS.world.surfaceBlock,
+    terrainAmplitude: readNumber('MC_TERRAIN_AMPLITUDE', DEFAULTS.world.terrainAmplitude),
+    terrainThickness: readNumber('MC_TERRAIN_THICKNESS', DEFAULTS.world.terrainThickness),
+    ...(overrides.world ?? {})
+  };
   const mergedSpawn = {
     x: readNumber('MC_SPAWN_X', DEFAULTS.spawn.x),
     y: readNumber('MC_SPAWN_Y', DEFAULTS.spawn.y),
@@ -76,6 +103,7 @@ function loadConfig(overrides = {}) {
     worldSavePath: process.env.MC_WORLD_SAVE_PATH ?? DEFAULTS.worldSavePath,
     welcomeMessage: process.env.MC_WELCOME_MESSAGE ?? DEFAULTS.welcomeMessage,
     ...overrides,
+    world: mergedWorld,
     spawn: mergedSpawn
   };
 }

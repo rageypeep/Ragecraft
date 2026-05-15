@@ -44,6 +44,20 @@ function rewritePacketId(buffer, newPacketId) {
   ]);
 }
 
+function build2612SetTimePacket(packetId, params = {}) {
+  const gameTimeValue = params.time ?? params.gameTime ?? 0n;
+  const gameTime = typeof gameTimeValue === 'bigint' ? gameTimeValue : BigInt(gameTimeValue);
+  const payload = Buffer.alloc(9);
+
+  payload.writeBigInt64BE(gameTime, 0);
+  payload[8] = 0; // empty clockUpdates map
+
+  return Buffer.concat([
+    writeVarInt(packetId),
+    payload
+  ]);
+}
+
 function rewriteIncomingPlayPacketBuffer(buffer, advertisedVersion) {
   const packetId = readVarInt(buffer, 0);
 
@@ -81,6 +95,10 @@ function buildCompatibilityPlayPacket(baseVersion, packetName, params, advertise
     throw new Error(
       `No compatibility packet id override exists for ${advertisedVersion} play packet "${packetName}".`
     );
+  }
+
+  if (advertisedVersion === '26.1.2' && packetName === 'update_time') {
+    return build2612SetTimePacket(targetPacketId, params);
   }
 
   const serializer = getPlaySerializer(baseVersion);

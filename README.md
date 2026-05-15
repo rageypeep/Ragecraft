@@ -2,46 +2,55 @@
 
 Experimental Minecraft-compatible server software written in Node.js.
 
-Ragecraft started as a protocol-level experiment using `minecraft-protocol`, but has now grown into a small custom server project with a working world bootstrap, basic block interaction, inventory sync, and a compatibility bridge for modern Minecraft Java clients.
+Ragecraft started as a protocol experiment built on top of `minecraft-protocol`. It has since turned into a small custom server project with a working world generator, block interaction, inventory bootstrap, chunk streaming, persistence, and a compatibility bridge for Minecraft Java `26.1.2`.
 
-It is not a full survival server yet. It is a research/playground project for learning how Minecraft multiplayer works under the hood.
+It is still not a full survival server. The project is primarily a learning playground for understanding how Minecraft multiplayer works under the hood.
 
 ## Current status
 
 Ragecraft can currently:
 
-- respond to the Minecraft multiplayer server list ping
+- respond to the multiplayer server list ping
 - accept offline-mode joins
 - support Minecraft Java `26.1.2` through a compatibility shim
 - complete login, configuration, registry loading, and play-state entry
-- spawn a player into a minimal world
-- send chunks and lighting data
-- allow basic movement
+- generate a seeded floating world with mixed biome regions
+- stream chunks around the player as they move
+- send chunk and lighting bootstrap data
+- support basic movement
 - support mining and block placement
+- spawn visible dropped item entities and collect them on contact
 - sync a simple hotbar/inventory
-- persist early world/block state experiments
+- persist modified world blocks to disk
 
-The current `26.1.2` support is not native. It uses `1.21.11` packet data as a base, with manual overrides for newer registry, tag, and packet behaviour.
+The generated world currently includes:
 
-In other words: it works, but it is gloriously cursed.
+- seeded terrain
+- caves
+- ore pockets and underground stone variants
+- ponds and simple shoreline shaping
+- biome-specific surface palettes
+- trees
+- surface decoration such as short grass, ferns, flowers, and mushrooms
+- ridge / cliff variation so terrain no longer looks like simple wave math
+
+The `26.1.2` support is not native Prismarine support. Ragecraft uses `1.21.11` packet data as a base and patches newer registry, tag, and packet behavior manually.
 
 ## Why this exists
 
-Minecraft multiplayer is far more complex than it looks from the outside.
+Minecraft multiplayer is much more complicated than it looks from the outside.
 
-Ragecraft is a way to explore:
+Ragecraft exists to explore:
 
-- the Minecraft Java protocol
-- login/configuration/play state transitions
-- dynamic registry loading
-- packet ID remapping
+- handshake, login, configuration, and play-state transitions
+- dynamic registries and tag loading
+- packet ID remapping across versions
 - chunk and lighting bootstrapping
-- block updates
-- inventory packets
-- world persistence
-- eventually, custom gameplay systems
+- block updates and inventory sync
+- world generation and persistence
+- eventually, custom gameplay systems and tooling
 
-The long-term idea is to build a Minecraft-compatible experimental server with its own systems, web tooling, and possibly a Nuxt/Three.js admin interface.
+The long-term goal is to build a Minecraft-compatible experimental server with its own systems, web tooling, and potentially a Three.js or Nuxt-based admin interface.
 
 ## Quick start
 
@@ -50,25 +59,35 @@ Install dependencies:
 ```bash
 npm install
 ```
+
 Start the server:
+
 ```bash
 npm start
 ```
+
 Then join from Minecraft Java Edition using:
-```
+
+```text
 localhost:25565
 ```
-By default, ```npm start``` targets the current compatibility path.
-To explicitly run the ```26.1.2``` compatibility mode:
-```PowerShell
+
+By default, `npm start` targets the current `26.1.2` compatibility path.
+
+To explicitly run `26.1.2` mode:
+
+```powershell
 $env:MC_VERSION='26.1.2'
 npm start
 ```
+
 To run the older native Prismarine-supported base:
-```PowerShell
+
+```powershell
 $env:MC_VERSION='1.21.11'
 npm start
 ```
+
 ## Configuration
 
 Environment variables:
@@ -83,15 +102,40 @@ Environment variables:
 | `MC_ONLINE_MODE` | `false` | Online-mode authentication |
 | `MC_ENCRYPTION` | `false` | Encryption toggle |
 | `MC_VIEW_DISTANCE` | `10` | View distance |
-| `MC_IS_FLAT` | `false` | Flat world flag |
+| `MC_IS_FLAT` | `false` | Flat-world flag exposed to the client |
 | `MC_WELCOME_MESSAGE` | `Welcome to Ragecraft, {username}.` | Join message |
 | `MC_SPAWN_X` | `0` | Spawn X |
-| `MC_SPAWN_Y` | `256` | Spawn Y |
+| `MC_SPAWN_Y` | `96` | Spawn Y |
 | `MC_SPAWN_Z` | `0` | Spawn Z |
 | `MC_SPAWN_YAW` | `0` | Spawn yaw |
 | `MC_SPAWN_PITCH` | `0` | Spawn pitch |
+| `MC_WORLD_MIXED_BIOMES` | `true` | Enable simple biome regions instead of one uniform biome |
+| `MC_WORLD_SEED` | `ragecraft` | Seed string used for deterministic terrain generation |
+| `MC_WORLD_CHUNK_RADIUS` | `2` | Initial generated radius around spawn, in chunks |
+| `MC_WORLD_STREAM_RADIUS` | `MC_VIEW_DISTANCE` | Streamed chunk radius around each player |
+| `MC_TERRAIN_THICKNESS` | `12` | Terrain thickness |
+| `MC_TERRAIN_AMPLITUDE` | `4` | Terrain height variation |
+| `MC_WORLD_BIOME` | `plains` | Biome used when mixed biomes are disabled |
+| `MC_SURFACE_BLOCK` | `grass_block` | Terrain surface block |
+| `MC_SOIL_BLOCK` | `dirt` | Soil block under the surface |
+| `MC_FOUNDATION_BLOCK` | `stone` | Deep terrain / foundation block |
 
-## 26.1.2 porting notes
+Chunk streaming note:
+
+- Ragecraft streams chunks in a radius around the player, like the real game.
+- The default `MC_VIEW_DISTANCE=10` means a `21x21` loaded area around the player.
+- If you want something closer to "about 32 chunks across", set `MC_WORLD_STREAM_RADIUS=16`, which gives a `33x33` area.
+
+World generation note:
+
+- By default, Ragecraft mixes plains, forest, birch forest, and stony regions.
+- Generation is deterministic. Changing `MC_WORLD_SEED` creates a different world while keeping chunk streaming and reloads consistent.
+- Trees, caves, ponds, surface decoration, and underground variants are generated from the same seed.
+- Surface palettes vary by biome so forest and stony zones do not all look like the same grass-over-dirt slab.
+- Terrain height now comes from layered seeded noise, with ridge and cliff modulation, instead of obvious repeating wave patterns.
+- If you want one uniform biome again, set `MC_WORLD_MIXED_BIOMES=false`.
+
+## 26.1.2 compatibility
 
 Minecraft Java `26.1.2` uses protocol `775`.
 
@@ -99,21 +143,23 @@ The Prismarine stack does not currently provide full native support for this ver
 
 ```text
 26.1.2 client
-→ protocol 775
-→ Ragecraft compatibility shim
-→ 1.21.11 packet data base
-→ manual packet/registry/tag overrides
+-> protocol 775
+-> Ragecraft compatibility shim
+-> 1.21.11 packet data base
+-> manual packet / registry / tag overrides
 ```
 
-Known areas that needed work:
+Areas that required custom work include:
 
-- login-start UUID payload
+- login-start UUID payload handling
 - configuration registry loading
 - dynamic registry schema changes
 - tag payload changes
 - play-state packet ID remapping
-- light/bootstrap packet ordering
+- light / bootstrap packet ordering
 - inventory slot field mapping
+
+Detailed notes live in [porting/26.1.2/README.md](porting/26.1.2/README.md) and [porting/26.1.2/compatibility-report.md](porting/26.1.2/compatibility-report.md).
 
 ## Useful scripts
 
@@ -165,63 +211,56 @@ Generate `26.1.2` registry override data:
 npm run generate:2612-registry-overrides
 ```
 
+Generate `26.1.2` packet map:
+
+```bash
+npm run generate:2612-packet-map
+```
+
+Generate the `26.1.2` compatibility report:
+
+```bash
+npm run generate:2612-compat-report
+```
+
 ## Roadmap
 
-### Short-term
+Current high-value next steps:
 
-- dropped item entities
-- item pickup
-- better world save/load
-- proper block/item ID mapping
-- more stable chunk persistence
-- clean up `26.1.2` packet remaps
-- reduce compatibility hacks where possible
-
-### Medium-term
-
-- multiple players in the same world
-- entity tracking
+- larger tree variety and better density rules per biome
+- chunk-population passes for features that must cross chunk borders cleanly
+- bedrock / foundation rules and proper world bottom shaping
+- real server-side lighting instead of the current pragmatic flat-sky approach
 - player persistence
-- command handling
-- better world generation
-- basic survival loop
-- block breaking rules
-- inventory merging and stack logic
+- commands
+- entity tracking
 
-### Long-term
-
-- plugin/module system
-- web dashboard
-- Three.js world/admin viewer
-- live server controls
-- custom events
-- AI/NPC experiments
-- experimental gameplay systems
+See [TODO.md](TODO.md) for the working backlog.
 
 ## Project philosophy
 
 Ragecraft is not trying to be Paper, Spigot, Fabric, or a production-ready Minecraft server.
 
-It is a learning project and protocol playground.
+It is a protocol playground and learning project.
 
-The goal is to understand the pieces Minecraft normally hides:
+The point is to understand the parts Minecraft normally hides:
 
 ```text
 handshake
-→ login
-→ configuration
-→ registries
-→ play state
-→ chunks
-→ lighting
-→ block updates
-→ inventory
-→ world simulation
+-> login
+-> configuration
+-> registries
+-> play state
+-> chunks
+-> lighting
+-> block updates
+-> inventory
+-> world simulation
 ```
 
-If it works, brilliant.
+If it works, good.
 
-If it breaks, that probably means there is another packet to bully into submission.
+If it breaks, there is probably another packet to bully into submission.
 
 ## Disclaimer
 
@@ -229,4 +268,4 @@ Ragecraft is an unofficial experimental project.
 
 It is not affiliated with Mojang, Microsoft, or Minecraft.
 
-Minecraft is a trademark of Microsoft/Mojang. This project does not include Minecraft assets and is intended for protocol research, learning, and custom server experimentation.
+Minecraft is a trademark of Microsoft / Mojang. This project does not include Minecraft assets and is intended for protocol research, learning, and custom server experimentation.

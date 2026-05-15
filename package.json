@@ -11,7 +11,8 @@
     "fetch:version-meta": "node scripts/fetch-version-meta.js 26.1.2",
     "generate:2612-tags": "node scripts/generate-2612-tags.js",
     "generate:2612-registry-overrides": "node scripts/generate-2612-registry-overrides.js",
-    "generate:2612-packet-map": "node scripts/generate-2612-packet-map.js"
+    "generate:2612-packet-map": "node scripts/generate-2612-packet-map.js",
+    "generate:2612-compat-report": "node scripts/generate-2612-compat-report.js"
   },
   "keywords": [
     "minecraft",

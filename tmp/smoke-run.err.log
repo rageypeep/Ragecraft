@@ -1,0 +1,4 @@
+Error: Timed out waiting for update_time.
+    at Timeout._onTimeout (E:\games\MC server\scripts\smoke-test.js:24:14)
+    at listOnTimeout (node:internal/timers:605:17)
+    at process.processTimers (node:internal/timers:541:7)

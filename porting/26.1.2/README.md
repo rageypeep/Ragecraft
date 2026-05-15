@@ -9,6 +9,7 @@ This directory tracks the local porting effort for Minecraft Java Edition `26.1.
 - The playable server in `src/` still targets the latest supported Prismarine version
 - A raw TCP probe is available to capture the real `26.1.2` handshake and login-start packets
 - An experimental compatibility mode now accepts protocol `775` while using `1.21.11` packet data as a fallback
+- A generated compatibility report now lives in [compatibility-report.md](./compatibility-report.md)
 
 ## Why the probe exists
 
@@ -27,6 +28,8 @@ The probe gives us a safe way to capture that from a real `26.1.2` client withou
 - `login_start` still begins with the username field
 - The captured `login_start` packet includes a trailing 16-byte player UUID
 - The local compatibility server can parse a raw `775` handshake and login-start packet well enough to reach the `login` event
+- The generated play packet map currently resolves `138` clientbound and `66` serverbound play packets
+- The current compatibility layer needs `14` registry override roots and `15` configuration tag types
 
 ## How to use it
 

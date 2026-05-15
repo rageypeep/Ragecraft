@@ -8,6 +8,18 @@ function buildChatComponent(mcData, text) {
     : JSON.stringify({ text });
 }
 
+function formatDisplayMessage(text, sender, kind) {
+  if (kind === 'chat') {
+    return `<${sender}> ${text}`;
+  }
+
+  if (sender && sender !== 'Server') {
+    return `[${sender}] ${text}`;
+  }
+
+  return text;
+}
+
 function formatWelcomeMessage(template, username) {
   return template.replaceAll('{username}', username);
 }
@@ -28,11 +40,23 @@ function extractChatMessage(packet) {
   return '';
 }
 
-function createChatApi({ connectedClients, isCompatibilityActive, mcData, server }) {
+function createChatApi({ connectedClients, isCompatibilityActive, mcData, server, writePacket }) {
   let nextChatIndex = 1;
 
   function sendMessage(clients, text, sender = 'Server', kind = 'system') {
-    if (!clients.length || isCompatibilityActive()) {
+    if (!clients.length) {
+      return;
+    }
+
+    const displayMessage = formatDisplayMessage(text, sender, kind);
+
+    if (isCompatibilityActive()) {
+      for (const client of clients) {
+        writePacket(client, 'system_chat', {
+          content: buildChatComponent(mcData, displayMessage),
+          isActionBar: false
+        });
+      }
       return;
     }
 
@@ -56,12 +80,8 @@ function createChatApi({ connectedClients, isCompatibilityActive, mcData, server
       return;
     }
 
-    const legacyMessage = kind === 'chat'
-      ? `<${sender}> ${text}`
-      : `[${sender}] ${text}`;
-
     server.writeToClients(clients, 'chat', {
-      message: JSON.stringify({ text: legacyMessage }),
+      message: JSON.stringify({ text: displayMessage }),
       position: 0,
       sender: SERVER_UUID
     });
