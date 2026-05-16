@@ -163,6 +163,29 @@ function countUndergroundAir(world, bounds) {
   return airCount;
 }
 
+function countWaterBlocksAboveNearbyAir(world, bounds, maxGap) {
+  let count = 0;
+
+  for (let x = bounds.minX; x <= bounds.maxX; x++) {
+    for (let z = bounds.minZ; z <= bounds.maxZ; z++) {
+      for (let y = bounds.maxY; y >= bounds.minY; y--) {
+        if (world.getBlockState({ x, y, z }) !== world.waterBlockStateId) {
+          continue;
+        }
+
+        for (let gap = 1; gap <= maxGap; gap++) {
+          if (world.getBlockState({ x, y: y - gap, z }) === world.airBlockStateId) {
+            count += 1;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  return count;
+}
+
 function countMatchingStateIds(world, bounds, stateIds) {
   const stateIdSet = new Set(stateIds);
   let count = 0;
@@ -610,6 +633,14 @@ async function testExperimental2612Compatibility() {
     minZ: -192,
     maxZ: 192
   }, [decoratedWorld.treeBlockStateIds.spruceLog]);
+  const unsupportedPondWaterCount = countWaterBlocksAboveNearbyAir(decoratedWorld, {
+    minX: -192,
+    maxX: 192,
+    minY: decoratedWorld.surfaceY - 8,
+    maxY: decoratedWorld.surfaceY,
+    minZ: -192,
+    maxZ: 192
+  }, 6);
   assert(surfacePaletteCount > 0);
   assert(waterCount > 0);
   assert(undergroundVariantCount > 0);
@@ -617,10 +648,134 @@ async function testExperimental2612Compatibility() {
   assert(decorationCount > 0);
   assert(oakLogCount > 0);
   assert([oakLogCount, birchLogCount, spruceLogCount].filter((count) => count > 0).length >= 2);
+  assert.equal(unsupportedPondWaterCount, 0);
   assert.deepEqual(
     decoratedWorld.populationFeaturePasses,
     ['ponds', 'trees', 'decorations']
   );
+
+  const plainsWorld = createInitialWorldPackets(compatibilityBaseData, {
+    spawn: { x: 0, y: 96, z: 0, yaw: 0, pitch: 0 },
+    world: {
+      biome: 'plains',
+      mixedBiomes: false,
+      seed: 'proper-plains'
+    }
+  });
+  const plainsGrassCount = countMatchingStateIds(plainsWorld, {
+    minX: -256,
+    maxX: 256,
+    minY: plainsWorld.surfaceY,
+    maxY: plainsWorld.surfaceY + 2,
+    minZ: -256,
+    maxZ: 256
+  }, [
+    plainsWorld.decorationStateIds.find((stateId) => stateId === compatibilityBaseData.blocksByName.short_grass.defaultState),
+    compatibilityBaseData.blocksByName.tall_grass.defaultState,
+    compatibilityBaseData.blocksByName.tall_grass.minStateId
+  ].filter(Boolean));
+  const plainsFlowerCount = countMatchingStateIds(plainsWorld, {
+    minX: -256,
+    maxX: 256,
+    minY: plainsWorld.surfaceY,
+    maxY: plainsWorld.surfaceY + 2,
+    minZ: -256,
+    maxZ: 256
+  }, [
+    compatibilityBaseData.blocksByName.dandelion.defaultState,
+    compatibilityBaseData.blocksByName.poppy.defaultState,
+    compatibilityBaseData.blocksByName.azure_bluet.defaultState,
+    compatibilityBaseData.blocksByName.oxeye_daisy.defaultState,
+    compatibilityBaseData.blocksByName.cornflower.defaultState,
+    compatibilityBaseData.blocksByName.orange_tulip.defaultState,
+    compatibilityBaseData.blocksByName.pink_tulip.defaultState,
+    compatibilityBaseData.blocksByName.red_tulip.defaultState,
+    compatibilityBaseData.blocksByName.white_tulip.defaultState
+  ]);
+  const plainsTulipCount = countMatchingStateIds(plainsWorld, {
+    minX: -256,
+    maxX: 256,
+    minY: plainsWorld.surfaceY,
+    maxY: plainsWorld.surfaceY + 2,
+    minZ: -256,
+    maxZ: 256
+  }, [
+    compatibilityBaseData.blocksByName.orange_tulip.defaultState,
+    compatibilityBaseData.blocksByName.pink_tulip.defaultState,
+    compatibilityBaseData.blocksByName.red_tulip.defaultState,
+    compatibilityBaseData.blocksByName.white_tulip.defaultState
+  ]);
+  const plainsOakLogCount = countMatchingStateIds(plainsWorld, {
+    minX: -256,
+    maxX: 256,
+    minY: plainsWorld.surfaceY + 1,
+    maxY: plainsWorld.surfaceY + 18,
+    minZ: -256,
+    maxZ: 256
+  }, [plainsWorld.treeBlockStateIds.oakLog]);
+  assert.deepEqual(plainsWorld.biomeMetadata.plains, {
+    key: 'plains',
+    label: 'Plains',
+    temperature: 0.8,
+    downfall: 0.4,
+    hasPrecipitation: true,
+    snow: 'none'
+  });
+  assert(plainsGrassCount > 200);
+  assert(plainsFlowerCount > 0);
+  assert(plainsTulipCount > 0);
+  assert(plainsOakLogCount > 0);
+
+  const sunflowerWorld = createInitialWorldPackets(compatibilityBaseData, {
+    spawn: { x: 0, y: 96, z: 0, yaw: 0, pitch: 0 },
+    world: {
+      biome: 'sunflower_plains',
+      mixedBiomes: false,
+      seed: 'sunflower-country'
+    }
+  });
+  const sunflowerCount = countMatchingStateIds(sunflowerWorld, {
+    minX: -256,
+    maxX: 256,
+    minY: sunflowerWorld.surfaceY,
+    maxY: sunflowerWorld.surfaceY + 3,
+    minZ: -256,
+    maxZ: 256
+  }, [
+    compatibilityBaseData.blocksByName.sunflower.defaultState,
+    compatibilityBaseData.blocksByName.sunflower.minStateId
+  ]);
+  const sunflowerGrassCount = countMatchingStateIds(sunflowerWorld, {
+    minX: -256,
+    maxX: 256,
+    minY: sunflowerWorld.surfaceY,
+    maxY: sunflowerWorld.surfaceY + 2,
+    minZ: -256,
+    maxZ: 256
+  }, [
+    compatibilityBaseData.blocksByName.short_grass.defaultState,
+    compatibilityBaseData.blocksByName.tall_grass.defaultState,
+    compatibilityBaseData.blocksByName.tall_grass.minStateId
+  ]);
+  const sunflowerOakLogCount = countMatchingStateIds(sunflowerWorld, {
+    minX: -256,
+    maxX: 256,
+    minY: sunflowerWorld.surfaceY + 1,
+    maxY: sunflowerWorld.surfaceY + 18,
+    minZ: -256,
+    maxZ: 256
+  }, [sunflowerWorld.treeBlockStateIds.oakLog]);
+  assert.deepEqual(sunflowerWorld.biomeMetadata.sunflower_plains, {
+    key: 'sunflower_plains',
+    label: 'Sunflower Plains',
+    temperature: 0.8,
+    downfall: 0.4,
+    hasPrecipitation: true,
+    snow: 'none'
+  });
+  assert(sunflowerCount > 0);
+  assert(sunflowerGrassCount > 200);
+  assert(sunflowerOakLogCount > 0);
 
   const compatibilityMapChunkPacket = buildCompatibilityPlayPacket(
     server.protocolDataVersion,

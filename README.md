@@ -32,6 +32,8 @@ The generated world currently includes:
 - biome-specific surface palettes
 - trees
 - surface decoration such as short grass, ferns, flowers, and mushrooms
+- a dedicated `plains` biome pass with flatter grassland shaping, sparse oak trees, denser grass cover, and tulip / wildflower patches
+- a dedicated `sunflower_plains` biome pass with sunflower-heavy grasslands built on top of the plains rules
 - ridge / cliff variation so terrain no longer looks like simple wave math
 
 The `26.1.2` support is not native Prismarine support. Ragecraft uses `1.21.11` packet data as a base and patches newer registry, tag, and packet behavior manually.
@@ -131,6 +133,7 @@ World generation note:
 - By default, Ragecraft mixes plains, forest, birch forest, and stony regions.
 - Generation is deterministic. Changing `MC_WORLD_SEED` creates a different world while keeping chunk streaming and reloads consistent.
 - Trees, caves, ponds, surface decoration, and underground variants are generated from the same seed.
+- Biome work is now being split into dedicated files under `src/biomes/`, starting with `src/biomes/plains.js` and `src/biomes/sunflower-plains.js`.
 - Tree placement now has biome-specific density and shape rules, with plains, forest, birch, and sparse stony variants.
 - Cross-chunk terrain features are applied through dedicated population passes so ponds and trees stay clean across chunk borders.
 - Surface palettes vary by biome so forest and stony zones do not all look like the same grass-over-dirt slab.

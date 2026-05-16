@@ -30,7 +30,7 @@ function extractSelectedSlot(packet) {
   return null;
 }
 
-function buildBlockChangePacket(world, position) {
+function buildBlockChangePacket(world, position, translateStateId = null) {
   const location = normalizeBlockPosition(position);
 
   if (!location) {
@@ -39,7 +39,9 @@ function buildBlockChangePacket(world, position) {
 
   return {
     location,
-    type: world.getBlockState(location)
+    type: typeof translateStateId === 'function'
+      ? translateStateId(world.getBlockState(location))
+      : world.getBlockState(location)
   };
 }
 

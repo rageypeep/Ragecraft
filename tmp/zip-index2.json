@@ -1,0 +1,13 @@
+{
+    "net/minecraft/world/level/chunk/GlobalPalette":  "E:\\games\\MC server\\tmp\\jar-classes2\\net\\minecraft\\world\\level\\chunk\\GlobalPalette.class",
+    "net/minecraft/world/level/chunk/PalettedContainer$CountConsumer":  "E:\\games\\MC server\\tmp\\jar-classes2\\net\\minecraft\\world\\level\\chunk\\PalettedContainer$CountConsumer.class",
+    "net/minecraft/world/level/chunk/SingleValuePalette":  "E:\\games\\MC server\\tmp\\jar-classes2\\net\\minecraft\\world\\level\\chunk\\SingleValuePalette.class",
+    "net/minecraft/world/level/chunk/PalettedContainerRO":  "E:\\games\\MC server\\tmp\\jar-classes2\\net\\minecraft\\world\\level\\chunk\\PalettedContainerRO.class",
+    "net/minecraft/world/level/chunk/PalettedContainerRO$PackedData":  "E:\\games\\MC server\\tmp\\jar-classes2\\net\\minecraft\\world\\level\\chunk\\PalettedContainerRO$PackedData.class",
+    "net/minecraft/world/level/chunk/PalettedContainerFactory":  "E:\\games\\MC server\\tmp\\jar-classes2\\net\\minecraft\\world\\level\\chunk\\PalettedContainerFactory.class",
+    "net/minecraft/world/level/chunk/PalettedContainer$Data":  "E:\\games\\MC server\\tmp\\jar-classes2\\net\\minecraft\\world\\level\\chunk\\PalettedContainer$Data.class",
+    "net/minecraft/world/level/chunk/PalettedContainer":  "E:\\games\\MC server\\tmp\\jar-classes2\\net\\minecraft\\world\\level\\chunk\\PalettedContainer.class",
+    "net/minecraft/world/level/chunk/LinearPalette":  "E:\\games\\MC server\\tmp\\jar-classes2\\net\\minecraft\\world\\level\\chunk\\LinearPalette.class",
+    "net/minecraft/world/level/chunk/PalettedContainerRO$Unpacker":  "E:\\games\\MC server\\tmp\\jar-classes2\\net\\minecraft\\world\\level\\chunk\\PalettedContainerRO$Unpacker.class",
+    "net/minecraft/world/level/chunk/HashMapPalette":  "E:\\games\\MC server\\tmp\\jar-classes2\\net\\minecraft\\world\\level\\chunk\\HashMapPalette.class"
+}

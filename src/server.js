@@ -1,4 +1,5 @@
 const mc = require('minecraft-protocol');
+const { createCompatibilityBlockStateTranslator } = require('./block-state-translator');
 const { loadConfig } = require('./config');
 const {
   consumeSelectedItem,
@@ -58,6 +59,9 @@ function createMinecraftServer(overrides = {}) {
   const registryOverrides = versionTarget.compatibility
     ? loadCompatibilityRegistryOverrides(versionTarget.advertisedVersion)
     : null;
+  const blockStateTranslator = versionTarget.compatibility
+    ? createCompatibilityBlockStateTranslator(mcData, versionTarget.advertisedVersion)
+    : null;
   const registryCodec = versionTarget.compatibility
     ? buildCompatibilityRegistryCodec(baseRegistryCodec, registryOverrides)
     : baseRegistryCodec;
@@ -95,6 +99,10 @@ function createMinecraftServer(overrides = {}) {
 
   function connectedClients(excludeClient = null) {
     return Object.values(server.clients).filter((client) => client !== excludeClient);
+  }
+
+  function translateBlockStateId(stateId) {
+    return blockStateTranslator ? blockStateTranslator.translate(stateId) : stateId;
   }
 
   function writePlayPacket(client, name, params) {
@@ -143,7 +151,7 @@ function createMinecraftServer(overrides = {}) {
   }
 
   function sendAuthoritativeBlockState(client, position) {
-    const blockChangePacket = buildBlockChangePacket(world, position);
+    const blockChangePacket = buildBlockChangePacket(world, position, translateBlockStateId);
 
     if (!blockChangePacket) {
       return;
@@ -156,7 +164,7 @@ function createMinecraftServer(overrides = {}) {
     const seen = new Set();
 
     for (const position of positions) {
-      const blockChangePacket = buildBlockChangePacket(world, position);
+      const blockChangePacket = buildBlockChangePacket(world, position, translateBlockStateId);
 
       if (!blockChangePacket) {
         continue;
@@ -180,7 +188,7 @@ function createMinecraftServer(overrides = {}) {
   }
 
   function broadcastAuthoritativeBlockState(position) {
-    const blockChangePacket = buildBlockChangePacket(world, position);
+    const blockChangePacket = buildBlockChangePacket(world, position, translateBlockStateId);
 
     if (!blockChangePacket) {
       return;
@@ -316,7 +324,11 @@ function createMinecraftServer(overrides = {}) {
           continue;
         }
 
-        const chunkPacket = world.getChunkPacket(chunkX, chunkZ);
+        const chunkPacket = world.getChunkPacket(
+          chunkX,
+          chunkZ,
+          blockStateTranslator ? translateBlockStateId : null
+        );
         writePlayPacket(client, 'map_chunk', chunkPacket);
         writePlayPacket(client, 'update_light', createLightUpdatePacket(chunkPacket));
         client.loadedChunkKeys.add(chunkKey);

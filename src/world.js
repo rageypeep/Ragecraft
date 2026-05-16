@@ -1,6 +1,7 @@
 const Chunk = require('prismarine-chunk')('1.21.11');
 const { SmartBuffer } = require('smart-buffer');
 const Vec3 = require('vec3');
+const biomes = require('./biomes');
 
 const HEIGHTMAP_TYPES = [
   'world_surface_wg',
@@ -25,6 +26,7 @@ const POND_MAX_RADIUS = 5;
 const POND_SHORE_WIDTH = 2;
 const POND_SHELF_WIDTH = 1.25;
 const POND_MAX_TERRAIN_DELTA = 1;
+const POND_MIN_FLOOR_THICKNESS = 12;
 const DEFAULT_WORLD_OPTIONS = {
   biome: 'plains',
   mixedBiomes: true,
@@ -197,6 +199,7 @@ function resolveWorldOptions(mcData, config = {}) {
     streamRadius: Math.max(1, configuredStreamRadius),
     biomeIds: {
       plains: resolveBiomeId(mcData, ['plains'], fallbackBiomeId),
+      sunflowerPlains: resolveBiomeId(mcData, ['sunflower_plains', 'plains'], fallbackBiomeId),
       forest: resolveBiomeId(mcData, ['forest'], fallbackBiomeId),
       birchForest: resolveBiomeId(mcData, ['birch_forest', 'old_growth_birch_forest'], fallbackBiomeId),
       stony: resolveBiomeId(mcData, ['windswept_hills', 'stony_peaks', 'stony_shore'], fallbackBiomeId)
@@ -222,13 +225,25 @@ function resolveWorldOptions(mcData, config = {}) {
       birchLog: resolveConfiguredBlockStateId(mcData, 'birch_log', 'stone'),
       birchLeaves: resolveConfiguredBlockStateId(mcData, 'birch_leaves', 'grass_block'),
       spruceLog: resolveConfiguredBlockStateId(mcData, 'spruce_log', 'stone'),
-      spruceLeaves: resolveConfiguredBlockStateId(mcData, 'spruce_leaves', 'grass_block')
+      spruceLeaves: resolveConfiguredBlockStateId(mcData, 'spruce_leaves', 'grass_block'),
+      beeNest: resolveConfiguredBlockStateId(mcData, 'bee_nest', 'oak_log')
     },
     decorationBlockStateIds: {
       shortGrass: resolveConfiguredBlockStateId(mcData, 'short_grass', 'air'),
+      tallGrassUpper: mcData.blocksByName.tall_grass?.minStateId ?? resolveConfiguredBlockStateId(mcData, 'short_grass', 'air'),
+      tallGrassLower: resolveConfiguredBlockStateId(mcData, 'tall_grass', 'air'),
+      sunflowerUpper: mcData.blocksByName.sunflower?.minStateId ?? resolveConfiguredBlockStateId(mcData, 'dandelion', 'air'),
+      sunflowerLower: resolveConfiguredBlockStateId(mcData, 'sunflower', 'air'),
       fern: resolveConfiguredBlockStateId(mcData, 'fern', 'air'),
       dandelion: resolveConfiguredBlockStateId(mcData, 'dandelion', 'air'),
       poppy: resolveConfiguredBlockStateId(mcData, 'poppy', 'air'),
+      azureBluet: resolveConfiguredBlockStateId(mcData, 'azure_bluet', 'dandelion'),
+      oxeyeDaisy: resolveConfiguredBlockStateId(mcData, 'oxeye_daisy', 'dandelion'),
+      cornflower: resolveConfiguredBlockStateId(mcData, 'cornflower', 'dandelion'),
+      orangeTulip: resolveConfiguredBlockStateId(mcData, 'orange_tulip', 'dandelion'),
+      pinkTulip: resolveConfiguredBlockStateId(mcData, 'pink_tulip', 'dandelion'),
+      redTulip: resolveConfiguredBlockStateId(mcData, 'red_tulip', 'dandelion'),
+      whiteTulip: resolveConfiguredBlockStateId(mcData, 'white_tulip', 'dandelion'),
       brownMushroom: resolveConfiguredBlockStateId(mcData, 'brown_mushroom', 'air'),
       redMushroom: resolveConfiguredBlockStateId(mcData, 'red_mushroom', 'air')
     },
@@ -327,6 +342,10 @@ function getBiomeRegionNoise(worldX, worldZ, seedOffset = 0) {
   }) - 0.12;
 }
 
+function getSunflowerPlainsNoise(worldX, worldZ, seedOffset = 0) {
+  return valueNoise2d(worldX, worldZ, seedOffset + 983, 0.0065);
+}
+
 function getTreeStyleForBiomeName(biomeName = '') {
   if (biomeName.includes('birch')) {
     return 'birch_forest';
@@ -363,26 +382,14 @@ function getDecorationStyleForBiomeName(biomeName = '') {
   return null;
 }
 
-function getBiomeProfile(worldOptions, worldX, worldZ) {
-  if (!worldOptions.mixedBiomes) {
-    return {
-      allowWater: true,
-      biomeId: worldOptions.biomeId,
-      shoreBlockStateId: worldOptions.terrainBlockStateIds.sand,
-      surfaceBlockStateId: worldOptions.surfaceBlockStateId,
-      soilBlockStateId: worldOptions.soilBlockStateId,
-      foundationBlockStateId: worldOptions.foundationBlockStateId,
-      terrainAmplitudeOffset: 0,
-      treeStyle: getTreeStyleForBiomeName(worldOptions.biomeName),
-      decorationStyle: getDecorationStyleForBiomeName(worldOptions.biomeName)
-    };
+function getLegacyBiomeProfile(worldOptions, biomeKey) {
+  if (biomeKey === 'sunflowerPlains') {
+    return biomes.sunflowerPlains.createProfile(worldOptions);
   }
 
-  const biomeRegionNoise = getBiomeRegionNoise(worldX, worldZ, worldOptions.seedHash);
-
-  if (biomeRegionNoise < -0.45) {
+  if (biomeKey === 'stony') {
     return {
-      allowWater: true,
+      biomeKey,
       biomeId: worldOptions.biomeIds.stony,
       shoreBlockStateId: worldOptions.terrainBlockStateIds.gravel,
       surfaceBlockStateId: worldOptions.useBiomeSurfacePalettes
@@ -398,23 +405,9 @@ function getBiomeProfile(worldOptions, worldX, worldZ) {
     };
   }
 
-  if (biomeRegionNoise < 0.15) {
+  if (biomeKey === 'forest') {
     return {
-      allowWater: true,
-      biomeId: worldOptions.biomeIds.plains,
-      shoreBlockStateId: worldOptions.terrainBlockStateIds.sand,
-      surfaceBlockStateId: worldOptions.surfaceBlockStateId,
-      soilBlockStateId: worldOptions.soilBlockStateId,
-      foundationBlockStateId: worldOptions.foundationBlockStateId,
-      terrainAmplitudeOffset: 0,
-      treeStyle: 'plains',
-      decorationStyle: 'plains'
-    };
-  }
-
-  if (biomeRegionNoise < 0.60) {
-    return {
-      allowWater: true,
+      biomeKey,
       biomeId: worldOptions.biomeIds.forest,
       shoreBlockStateId: worldOptions.terrainBlockStateIds.sand,
       surfaceBlockStateId: worldOptions.useBiomeSurfacePalettes
@@ -430,18 +423,68 @@ function getBiomeProfile(worldOptions, worldX, worldZ) {
     };
   }
 
+  if (biomeKey === 'birchForest') {
+    return {
+      biomeKey,
+      biomeId: worldOptions.biomeIds.birchForest,
+      shoreBlockStateId: worldOptions.terrainBlockStateIds.sand,
+      surfaceBlockStateId: worldOptions.surfaceBlockStateId,
+      soilBlockStateId: worldOptions.useBiomeSurfacePalettes
+        ? worldOptions.terrainBlockStateIds.rootedDirt
+        : worldOptions.soilBlockStateId,
+      foundationBlockStateId: worldOptions.foundationBlockStateId,
+      terrainAmplitudeOffset: 1,
+      treeStyle: 'birch_forest',
+      decorationStyle: 'birch'
+    };
+  }
+
+  return biomes.plains.createProfile(worldOptions);
+}
+
+function getBiomeProfile(worldOptions, worldX, worldZ) {
+  if (!worldOptions.mixedBiomes) {
+    if (worldOptions.biomeName.includes('sunflower')) {
+      return biomes.sunflowerPlains.createProfile(worldOptions);
+    }
+
+    if (worldOptions.biomeName.includes('plains') || worldOptions.biomeName.includes('meadow')) {
+      return biomes.plains.createProfile(worldOptions);
+    }
+
+    return {
+      ...getLegacyBiomeProfile(worldOptions, worldOptions.biomeName.includes('birch') ? 'birchForest' : worldOptions.biomeName.includes('forest') ? 'forest' : worldOptions.biomeName.includes('stony') || worldOptions.biomeName.includes('windswept') || worldOptions.biomeName.includes('peak') ? 'stony' : 'plains'),
+      allowWater: true
+    };
+  }
+
+  const biomeRegionNoise = getBiomeRegionNoise(worldX, worldZ, worldOptions.seedHash);
+
+  if (biomeRegionNoise < -0.45) {
+    return {
+      ...getLegacyBiomeProfile(worldOptions, 'stony'),
+      allowWater: true
+    };
+  }
+
+  if (biomeRegionNoise < 0.15) {
+    if (getSunflowerPlainsNoise(worldX, worldZ, worldOptions.seedHash) > 0.77) {
+      return biomes.sunflowerPlains.createProfile(worldOptions);
+    }
+
+    return biomes.plains.createProfile(worldOptions);
+  }
+
+  if (biomeRegionNoise < 0.60) {
+    return {
+      ...getLegacyBiomeProfile(worldOptions, 'forest'),
+      allowWater: true
+    };
+  }
+
   return {
-    allowWater: true,
-    biomeId: worldOptions.biomeIds.birchForest,
-    shoreBlockStateId: worldOptions.terrainBlockStateIds.sand,
-    surfaceBlockStateId: worldOptions.surfaceBlockStateId,
-    soilBlockStateId: worldOptions.useBiomeSurfacePalettes
-      ? worldOptions.terrainBlockStateIds.rootedDirt
-      : worldOptions.soilBlockStateId,
-    foundationBlockStateId: worldOptions.foundationBlockStateId,
-    terrainAmplitudeOffset: 1,
-    treeStyle: 'birch_forest',
-    decorationStyle: 'birch'
+    ...getLegacyBiomeProfile(worldOptions, 'birchForest'),
+    allowWater: true
   };
 }
 
@@ -485,18 +528,19 @@ function getSurfaceVariation(worldOptions, surfaceY, spawn, centerX, centerZ, ra
 function buildTreeFeature(worldOptions, treeType, worldX, worldZ, topY, seedA, seedB) {
   const heightNoise = hashNoise2d(seedA, seedB, worldOptions.seedHash + 29);
 
-  if (treeType === 'oak_bushy') {
-    return {
-      canopyLayers: [
-        { yOffset: 0, radius: 2 },
-        { yOffset: 1, radius: 3 },
-        { yOffset: 2, radius: 2 },
-        { yOffset: 3, radius: 1 }
-      ],
-      height: 5 + Math.floor(heightNoise * 2),
-      leafBlockStateId: worldOptions.treeBlockStateIds.oakLeaves,
-      logBlockStateId: worldOptions.treeBlockStateIds.oakLog,
-      topLeafOffset: 4,
+    if (treeType === 'oak_bushy') {
+      return {
+        canopyLayers: [
+          { yOffset: 0, radius: 2 },
+          { yOffset: 1, radius: 3 },
+          { yOffset: 2, radius: 2 },
+          { yOffset: 3, radius: 1 }
+        ],
+        canopyBaseOffset: 1,
+        height: 5 + Math.floor(heightNoise * 2),
+        leafBlockStateId: worldOptions.treeBlockStateIds.oakLeaves,
+        logBlockStateId: worldOptions.treeBlockStateIds.oakLog,
+        topLeafOffset: 4,
       type: treeType,
       worldX,
       worldZ,
@@ -504,17 +548,18 @@ function buildTreeFeature(worldOptions, treeType, worldX, worldZ, topY, seedA, s
     };
   }
 
-  if (treeType === 'oak_tall') {
-    return {
-      canopyLayers: [
-        { yOffset: 0, radius: 2 },
-        { yOffset: 1, radius: 2 },
-        { yOffset: 2, radius: 1 }
-      ],
-      height: 6 + Math.floor(heightNoise * 3),
-      leafBlockStateId: worldOptions.treeBlockStateIds.oakLeaves,
-      logBlockStateId: worldOptions.treeBlockStateIds.oakLog,
-      topLeafOffset: 3,
+    if (treeType === 'oak_tall') {
+      return {
+        canopyLayers: [
+          { yOffset: 0, radius: 2 },
+          { yOffset: 1, radius: 2 },
+          { yOffset: 2, radius: 1 }
+        ],
+        canopyBaseOffset: 1,
+        height: 6 + Math.floor(heightNoise * 3),
+        leafBlockStateId: worldOptions.treeBlockStateIds.oakLeaves,
+        logBlockStateId: worldOptions.treeBlockStateIds.oakLog,
+        topLeafOffset: 3,
       type: treeType,
       worldX,
       worldZ,
@@ -522,71 +567,75 @@ function buildTreeFeature(worldOptions, treeType, worldX, worldZ, topY, seedA, s
     };
   }
 
-  if (treeType === 'birch_tall') {
+    if (treeType === 'birch_tall') {
+      return {
+        canopyLayers: [
+          { yOffset: 0, radius: 2 },
+          { yOffset: 1, radius: 1 },
+          { yOffset: 2, radius: 1 }
+        ],
+        canopyBaseOffset: 1,
+        height: 6 + Math.floor(heightNoise * 3),
+        leafBlockStateId: worldOptions.treeBlockStateIds.birchLeaves,
+        logBlockStateId: worldOptions.treeBlockStateIds.birchLog,
+        topLeafOffset: 3,
+      type: treeType,
+      worldX,
+      worldZ,
+      topY
+    };
+  }
+
+    if (treeType === 'spruce_narrow') {
+      return {
+        canopyLayers: [
+          { yOffset: 0, radius: 2 },
+          { yOffset: 1, radius: 2 },
+          { yOffset: 2, radius: 1 },
+          { yOffset: 3, radius: 1 }
+        ],
+        canopyBaseOffset: 1,
+        height: 7 + Math.floor(heightNoise * 3),
+        leafBlockStateId: worldOptions.treeBlockStateIds.spruceLeaves,
+        logBlockStateId: worldOptions.treeBlockStateIds.spruceLog,
+        topLeafOffset: 4,
+      type: treeType,
+      worldX,
+      worldZ,
+      topY
+    };
+  }
+
+    if (treeType === 'oak_small') {
+      return {
+        canopyLayers: [
+          { yOffset: 0, radius: 2 },
+          { yOffset: 1, radius: 2 },
+          { yOffset: 2, radius: 1 }
+        ],
+        canopyBaseOffset: 1,
+        height: 4 + Math.floor(heightNoise * 2),
+        leafBlockStateId: worldOptions.treeBlockStateIds.oakLeaves,
+        logBlockStateId: worldOptions.treeBlockStateIds.oakLog,
+        topLeafOffset: 3,
+      type: treeType,
+      worldX,
+      worldZ,
+      topY
+    };
+  }
+
     return {
       canopyLayers: [
         { yOffset: 0, radius: 2 },
         { yOffset: 1, radius: 1 },
         { yOffset: 2, radius: 1 }
       ],
-      height: 6 + Math.floor(heightNoise * 3),
+      canopyBaseOffset: 1,
+      height: 5 + Math.floor(heightNoise * 2),
       leafBlockStateId: worldOptions.treeBlockStateIds.birchLeaves,
       logBlockStateId: worldOptions.treeBlockStateIds.birchLog,
       topLeafOffset: 3,
-      type: treeType,
-      worldX,
-      worldZ,
-      topY
-    };
-  }
-
-  if (treeType === 'spruce_narrow') {
-    return {
-      canopyLayers: [
-        { yOffset: 0, radius: 2 },
-        { yOffset: 1, radius: 2 },
-        { yOffset: 2, radius: 1 },
-        { yOffset: 3, radius: 1 }
-      ],
-      height: 7 + Math.floor(heightNoise * 3),
-      leafBlockStateId: worldOptions.treeBlockStateIds.spruceLeaves,
-      logBlockStateId: worldOptions.treeBlockStateIds.spruceLog,
-      topLeafOffset: 4,
-      type: treeType,
-      worldX,
-      worldZ,
-      topY
-    };
-  }
-
-  if (treeType === 'oak_small') {
-    return {
-      canopyLayers: [
-        { yOffset: 0, radius: 2 },
-        { yOffset: 1, radius: 2 },
-        { yOffset: 2, radius: 1 }
-      ],
-      height: 4 + Math.floor(heightNoise * 2),
-      leafBlockStateId: worldOptions.treeBlockStateIds.oakLeaves,
-      logBlockStateId: worldOptions.treeBlockStateIds.oakLog,
-      topLeafOffset: 3,
-      type: treeType,
-      worldX,
-      worldZ,
-      topY
-    };
-  }
-
-  return {
-    canopyLayers: [
-      { yOffset: 0, radius: 2 },
-      { yOffset: 1, radius: 1 },
-      { yOffset: 2, radius: 1 }
-    ],
-    height: 5 + Math.floor(heightNoise * 2),
-    leafBlockStateId: worldOptions.treeBlockStateIds.birchLeaves,
-    logBlockStateId: worldOptions.treeBlockStateIds.birchLog,
-    topLeafOffset: 3,
     type: 'birch_small',
     worldX,
     worldZ,
@@ -623,6 +672,19 @@ function resolveTreeType(treeStyle, selectorNoise) {
 }
 
 function getTreeCandidate(worldOptions, surfaceY, spawn, cellX, cellZ) {
+  const treeContext = {
+    worldOptions,
+    surfaceY,
+    spawn,
+    cellX,
+    cellZ,
+    hashNoise2d,
+    valueNoise2d,
+    getColumnDescriptor,
+    getSurfaceVariation,
+    isNearSpawn,
+    buildTreeFeature
+  };
   const candidateNoise = hashNoise2d(cellX, cellZ, worldOptions.seedHash + 11);
   const densityNoise = hashNoise2d(cellX, cellZ, worldOptions.seedHash + 37);
   const selectorNoise = hashNoise2d(cellX, cellZ, worldOptions.seedHash + 53);
@@ -636,6 +698,10 @@ function getTreeCandidate(worldOptions, surfaceY, spawn, cellX, cellZ) {
   }
 
   const { biomeProfile, topY } = getColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ);
+  if (biomeProfile.biomeModule?.getTreeCandidate) {
+    return biomeProfile.biomeModule.getTreeCandidate(treeContext);
+  }
+
   const treeStyle = biomeProfile.treeStyle;
 
   if (!treeStyle) {
@@ -769,7 +835,7 @@ function getPondCandidate(worldOptions, surfaceY, spawn, cellX, cellZ) {
     return null;
   }
 
-  return {
+  const candidate = {
     centerX,
     centerZ,
     depth,
@@ -777,6 +843,44 @@ function getPondCandidate(worldOptions, surfaceY, spawn, cellX, cellZ) {
     shoreBlockStateId: centerColumn.biomeProfile.shoreBlockStateId,
     waterLevel
   };
+
+  if (pondCandidateHasNearbyCaveRisk(worldOptions, surfaceY, spawn, candidate)) {
+    return null;
+  }
+
+  return candidate;
+}
+
+function pondCandidateHasNearbyCaveRisk(worldOptions, surfaceY, spawn, pond) {
+  const outerRadius = pond.radius + POND_SHORE_WIDTH + 1;
+  const minProbeY = pond.waterLevel - (pond.depth + 10);
+
+  for (let worldX = pond.centerX - outerRadius; worldX <= pond.centerX + outerRadius; worldX++) {
+    for (let worldZ = pond.centerZ - outerRadius; worldZ <= pond.centerZ + outerRadius; worldZ++) {
+      const dx = worldX - pond.centerX;
+      const dz = worldZ - pond.centerZ;
+      const distance = Math.sqrt((dx * dx) + (dz * dz));
+
+      if (distance > outerRadius + 0.25) {
+        continue;
+      }
+
+      const column = getColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ);
+      const topProbeY = Math.min(column.topY - CAVE_MIN_SURFACE_ROOF, pond.waterLevel - 2);
+
+      if (topProbeY <= minProbeY) {
+        continue;
+      }
+
+      for (let worldY = topProbeY; worldY >= minProbeY; worldY--) {
+        if (shouldCarveCave(worldOptions, spawn, column, worldX, worldY, worldZ)) {
+          return true;
+        }
+      }
+    }
+  }
+
+  return false;
 }
 
 function getTopSolidY(chunk, localX, localZ) {
@@ -863,6 +967,28 @@ function getDecorationStateId(worldOptions, decorationStyle, worldX, worldZ, top
   return null;
 }
 
+function placeDecorationFeature(chunk, localX, localZ, topY, decorationFeature) {
+  if (!decorationFeature?.lowerStateId) {
+    return false;
+  }
+
+  if (chunk.getBlockStateId(new Vec3(localX, topY + 1, localZ)) !== 0) {
+    return false;
+  }
+
+  if (decorationFeature.upperStateId && chunk.getBlockStateId(new Vec3(localX, topY + 2, localZ)) !== 0) {
+    return false;
+  }
+
+  chunk.setBlockStateId(new Vec3(localX, topY + 1, localZ), decorationFeature.lowerStateId);
+
+  if (decorationFeature.upperStateId) {
+    chunk.setBlockStateId(new Vec3(localX, topY + 2, localZ), decorationFeature.upperStateId);
+  }
+
+  return true;
+}
+
 function applySurfaceDecorationsToChunk(chunk, chunkX, chunkZ, worldOptions, surfaceY, spawn) {
   for (let localX = 0; localX < 16; localX++) {
     for (let localZ = 0; localZ < 16; localZ++) {
@@ -880,28 +1006,41 @@ function applySurfaceDecorationsToChunk(chunk, chunkX, chunkZ, worldOptions, sur
         continue;
       }
 
-      if (chunk.getBlockStateId(new Vec3(localX, topY + 1, localZ)) !== 0) {
-        continue;
+        const biomeProfile = getBiomeProfile(worldOptions, worldX, worldZ);
+        const decorationFeature = biomeProfile.biomeModule?.getDecorationFeature
+          ? biomeProfile.biomeModule.getDecorationFeature({
+            worldOptions,
+            worldX,
+            worldZ,
+            topY,
+            topStateId,
+            hashNoise2d,
+            valueNoise2d
+          })
+          : (() => {
+            const decorationStyle = biomeProfile.decorationStyle;
+            const decorationStateId = getDecorationStateId(
+              worldOptions,
+              decorationStyle,
+              worldX,
+              worldZ,
+              topY,
+              topStateId
+            );
+
+            return decorationStateId
+              ? { lowerStateId: decorationStateId }
+              : null;
+          })();
+
+        if (!decorationFeature) {
+          continue;
+        }
+
+        placeDecorationFeature(chunk, localX, localZ, topY, decorationFeature);
       }
-
-      const decorationStyle = getBiomeProfile(worldOptions, worldX, worldZ).decorationStyle;
-      const decorationStateId = getDecorationStateId(
-        worldOptions,
-        decorationStyle,
-        worldX,
-        worldZ,
-        topY,
-        topStateId
-      );
-
-      if (!decorationStateId) {
-        continue;
-      }
-
-      chunk.setBlockStateId(new Vec3(localX, topY + 1, localZ), decorationStateId);
     }
   }
-}
 
 function shapeColumnTop(chunk, localX, localZ, targetTopY, stateId) {
   const currentTopY = getTopSolidY(chunk, localX, localZ);
@@ -915,6 +1054,60 @@ function shapeColumnTop(chunk, localX, localZ, targetTopY, stateId) {
 
   chunk.setBlockStateId(new Vec3(localX, clampedTargetTopY, localZ), stateId);
   return clampedTargetTopY;
+}
+
+function reinforcePondFloor(chunk, localX, localZ, floorY, supportStateId) {
+  for (let y = floorY - 1; y >= floorY - POND_MIN_FLOOR_THICKNESS; y--) {
+    if (y < chunk.minY) {
+      break;
+    }
+
+    if (chunk.getBlockStateId(new Vec3(localX, y, localZ)) === 0) {
+      chunk.setBlockStateId(new Vec3(localX, y, localZ), supportStateId);
+    }
+  }
+}
+
+function sealPondEnvelope(chunk, chunkX, chunkZ, pond, supportStateId) {
+  const sealRadius = pond.radius + POND_SHORE_WIDTH + 1;
+  const minSealY = pond.waterLevel - POND_MIN_FLOOR_THICKNESS;
+
+  for (let worldX = pond.centerX - sealRadius; worldX <= pond.centerX + sealRadius; worldX++) {
+    for (let worldZ = pond.centerZ - sealRadius; worldZ <= pond.centerZ + sealRadius; worldZ++) {
+      if (
+        worldX < chunkX * 16 ||
+        worldX >= ((chunkX + 1) * 16) ||
+        worldZ < chunkZ * 16 ||
+        worldZ >= ((chunkZ + 1) * 16)
+      ) {
+        continue;
+      }
+
+      const dx = worldX - pond.centerX;
+      const dz = worldZ - pond.centerZ;
+      const distance = Math.sqrt((dx * dx) + (dz * dz));
+
+      if (distance > sealRadius + 0.25) {
+        continue;
+      }
+
+      const localX = worldX - (chunkX * 16);
+      const localZ = worldZ - (chunkZ * 16);
+
+      for (let y = pond.waterLevel - 1; y >= minSealY; y--) {
+        if (y < chunk.minY) {
+          break;
+        }
+
+        const position = new Vec3(localX, y, localZ);
+        const stateId = chunk.getBlockStateId(position);
+
+        if (stateId === 0) {
+          chunk.setBlockStateId(position, supportStateId);
+        }
+      }
+    }
+  }
 }
 
 function applyPondToChunk(chunk, chunkX, chunkZ, pond, worldOptions) {
@@ -943,32 +1136,36 @@ function applyPondToChunk(chunk, chunkX, chunkZ, pond, worldOptions) {
       const localZ = worldZ - (chunkZ * 16);
       const shelfRadius = Math.max(1.5, pond.radius - POND_SHELF_WIDTH);
 
-      if (distance <= shelfRadius) {
-        const normalizedDistance = distance / shelfRadius;
-        const bowlDepth = Math.max(2, Math.round((1 - normalizedDistance) * pond.depth) + 1);
-        const floorY = pond.waterLevel - bowlDepth;
-        const actualFloorY = shapeColumnTop(chunk, localX, localZ, floorY, pond.shoreBlockStateId);
-        for (let y = actualFloorY + 1; y <= pond.waterLevel; y++) {
-          chunk.setBlockStateId(new Vec3(localX, y, localZ), worldOptions.terrainBlockStateIds.water);
+        if (distance <= shelfRadius) {
+          const normalizedDistance = distance / shelfRadius;
+          const bowlDepth = Math.max(2, Math.round((1 - normalizedDistance) * pond.depth) + 1);
+          const floorY = pond.waterLevel - bowlDepth;
+          const actualFloorY = shapeColumnTop(chunk, localX, localZ, floorY, pond.shoreBlockStateId);
+          reinforcePondFloor(chunk, localX, localZ, actualFloorY, worldOptions.foundationBlockStateId);
+          for (let y = actualFloorY + 1; y <= pond.waterLevel; y++) {
+            chunk.setBlockStateId(new Vec3(localX, y, localZ), worldOptions.terrainBlockStateIds.water);
+          }
+          continue;
         }
-        continue;
-      }
 
-      if (distance <= pond.radius) {
-        const shelfFloorY = pond.waterLevel - 1;
-        const actualShelfFloorY = shapeColumnTop(chunk, localX, localZ, shelfFloorY, pond.shoreBlockStateId);
-        for (let y = actualShelfFloorY + 1; y <= pond.waterLevel; y++) {
-          chunk.setBlockStateId(new Vec3(localX, y, localZ), worldOptions.terrainBlockStateIds.water);
+        if (distance <= pond.radius) {
+          const shelfFloorY = pond.waterLevel - 1;
+          const actualShelfFloorY = shapeColumnTop(chunk, localX, localZ, shelfFloorY, pond.shoreBlockStateId);
+          reinforcePondFloor(chunk, localX, localZ, actualShelfFloorY, worldOptions.foundationBlockStateId);
+          for (let y = actualShelfFloorY + 1; y <= pond.waterLevel; y++) {
+            chunk.setBlockStateId(new Vec3(localX, y, localZ), worldOptions.terrainBlockStateIds.water);
+          }
+          continue;
         }
-        continue;
-      }
 
-      if (distance <= outerRadius) {
-        shapeColumnTop(chunk, localX, localZ, bankTopY, pond.shoreBlockStateId);
+        if (distance <= outerRadius) {
+          shapeColumnTop(chunk, localX, localZ, bankTopY, pond.shoreBlockStateId);
+        }
       }
     }
+
+    sealPondEnvelope(chunk, chunkX, chunkZ, pond, worldOptions.foundationBlockStateId);
   }
-}
 
 function setChunkBlock(chunk, chunkX, chunkZ, worldX, worldY, worldZ, stateId, overwriteAirOnly = false) {
   if (
@@ -998,7 +1195,7 @@ function applyTreeToChunk(chunk, chunkX, chunkZ, tree) {
     setChunkBlock(chunk, chunkX, chunkZ, tree.worldX, trunkY, tree.worldZ, tree.logBlockStateId);
   }
 
-  const canopyBaseY = tree.topY + tree.height - tree.canopyLayers.length;
+  const canopyBaseY = tree.topY + tree.height - tree.canopyLayers.length + (tree.canopyBaseOffset ?? 0);
 
   for (const layer of tree.canopyLayers) {
     const y = canopyBaseY + layer.yOffset;
@@ -1038,6 +1235,19 @@ function applyTreeToChunk(chunk, chunkX, chunkZ, tree) {
     tree.leafBlockStateId,
     true
   );
+
+  if (tree.beeNest) {
+    setChunkBlock(
+      chunk,
+      chunkX,
+      chunkZ,
+      tree.worldX + tree.beeNest.dx,
+      tree.beeNest.y,
+      tree.worldZ + tree.beeNest.dz,
+      tree.beeNest.stateId,
+      true
+    );
+  }
 }
 
 function doesTreeOverlapPond(tree, pond) {
@@ -1272,6 +1482,23 @@ function countSectionFluidBlocks(chunk, sectionIndex, fluidStateId) {
   return count;
 }
 
+function countSectionNonEmptyBlocks(chunk, sectionIndex) {
+  const sectionBaseY = chunk.minY + (sectionIndex * 16);
+  let count = 0;
+
+  for (let localY = 0; localY < 16; localY++) {
+    for (let localZ = 0; localZ < 16; localZ++) {
+      for (let localX = 0; localX < 16; localX++) {
+        if (chunk.getBlockStateId(new Vec3(localX, sectionBaseY + localY, localZ)) !== 0) {
+          count += 1;
+        }
+      }
+    }
+  }
+
+  return count;
+}
+
 function createChunkTemplate(chunk, surfaceY, worldOptions) {
   return {
     heightmaps: createHeightmapData(chunk, surfaceY),
@@ -1280,15 +1507,47 @@ function createChunkTemplate(chunk, surfaceY, worldOptions) {
   };
 }
 
+function createTranslatedChunk(sourceChunk, translateStateId) {
+  const translatedChunk = new Chunk();
+
+  for (let y = sourceChunk.minY; y < sourceChunk.minY + sourceChunk.worldHeight; y++) {
+    for (let localZ = 0; localZ < 16; localZ++) {
+      for (let localX = 0; localX < 16; localX++) {
+        const position = new Vec3(localX, y, localZ);
+        const stateId = sourceChunk.getBlockStateId(position);
+
+        if (stateId !== 0) {
+          translatedChunk.setBlockStateId(position, translateStateId(stateId));
+        }
+
+        translatedChunk.setSkyLight(position, sourceChunk.getSkyLight(position));
+        translatedChunk.setBlockLight(position, sourceChunk.getBlockLight(position));
+      }
+    }
+  }
+
+  for (let y = sourceChunk.minY; y < sourceChunk.minY + sourceChunk.worldHeight; y += 4) {
+    for (let localZ = 0; localZ < 16; localZ += 4) {
+      for (let localX = 0; localX < 16; localX += 4) {
+        const position = new Vec3(localX, y, localZ);
+        translatedChunk.setBiome(position, sourceChunk.getBiome(position));
+      }
+    }
+  }
+
+  return translatedChunk;
+}
+
 function encodeChunkData(chunk, worldOptions) {
   const buffer = new SmartBuffer();
 
   for (let index = 0; index < chunk.sections.length; index++) {
     const section = chunk.sections[index];
     const biome = chunk.biomes[index];
+    const nonEmptyBlockCount = countSectionNonEmptyBlocks(chunk, index);
     const fluidCount = countSectionFluidBlocks(chunk, index, worldOptions?.terrainBlockStateIds?.water);
 
-    buffer.writeInt16BE(section?.solidBlockCount ?? 0);
+    buffer.writeInt16BE(nonEmptyBlockCount);
     buffer.writeInt16BE(fluidCount);
     section.data.write(buffer);
     biome.write(buffer);
@@ -1298,9 +1557,9 @@ function encodeChunkData(chunk, worldOptions) {
 }
 
 function createChunkPacket(x, z, template) {
-  return {
-    x,
-    z,
+    return {
+      x,
+      z,
     heightmaps: template.heightmaps,
     chunkData: template.chunkData,
     blockEntities: template.blockEntities,
@@ -1566,21 +1825,24 @@ function createInitialWorldPackets(mcData, config, savedWorldState = { blocks: [
     return getChunkPackets(spawnChunk.x, spawnChunk.z, worldOptions.chunkRadius);
   }
 
-  function getChunkPacket(chunkX, chunkZ) {
+  function getChunkPacket(chunkX, chunkZ, translateStateId = null) {
     const { chunk } = ensureChunk(chunkX, chunkZ);
+    const packetChunk = typeof translateStateId === 'function'
+      ? createTranslatedChunk(chunk, translateStateId)
+      : chunk;
 
     return createChunkPacket(chunkX, chunkZ, {
-      ...createChunkTemplate(chunk, surfaceY, worldOptions),
+      ...createChunkTemplate(packetChunk, surfaceY, worldOptions),
       ...lightTemplate
     });
   }
 
-  function getChunkPackets(centerChunkX, centerChunkZ, radius) {
+  function getChunkPackets(centerChunkX, centerChunkZ, radius, translateStateId = null) {
     const packets = [];
 
     for (let dz = -radius; dz <= radius; dz++) {
       for (let dx = -radius; dx <= radius; dx++) {
-        packets.push(getChunkPacket(centerChunkX + dx, centerChunkZ + dz));
+        packets.push(getChunkPacket(centerChunkX + dx, centerChunkZ + dz, translateStateId));
       }
     }
 
@@ -1668,6 +1930,10 @@ function createInitialWorldPackets(mcData, config, savedWorldState = { blocks: [
     ],
     waterBlockStateId: worldOptions.terrainBlockStateIds.water,
     decorationStateIds: Object.values(worldOptions.decorationBlockStateIds).filter(Boolean),
+    biomeMetadata: {
+      plains: biomes.plains.metadata,
+      sunflower_plains: biomes.sunflowerPlains.metadata
+    },
     topBlockStateId,
     treeBlockStateIds: worldOptions.treeBlockStateIds
     ,

@@ -1,0 +1,10 @@
+{
+    "net/minecraft/world/level/chunk/LevelChunkSection$1BlockCounter":  "E:\\games\\MC server\\tmp\\jar-classes\\net\\minecraft\\world\\level\\chunk\\LevelChunkSection$1BlockCounter.class",
+    "net/minecraft/network/protocol/game/ClientboundLevelChunkPacketData$BlockEntityInfo":  "E:\\games\\MC server\\tmp\\jar-classes\\net\\minecraft\\network\\protocol\\game\\ClientboundLevelChunkPacketData$BlockEntityInfo.class",
+    "net/minecraft/network/RegistryFriendlyByteBuf":  "E:\\games\\MC server\\tmp\\jar-classes\\net\\minecraft\\network\\RegistryFriendlyByteBuf.class",
+    "net/minecraft/network/FriendlyByteBuf":  "E:\\games\\MC server\\tmp\\jar-classes\\net\\minecraft\\network\\FriendlyByteBuf.class",
+    "net/minecraft/network/protocol/game/ClientboundLevelChunkPacketData":  "E:\\games\\MC server\\tmp\\jar-classes\\net\\minecraft\\network\\protocol\\game\\ClientboundLevelChunkPacketData.class",
+    "net/minecraft/network/protocol/game/ClientboundLevelChunkPacketData$BlockEntityTagOutput":  "E:\\games\\MC server\\tmp\\jar-classes\\net\\minecraft\\network\\protocol\\game\\ClientboundLevelChunkPacketData$BlockEntityTagOutput.class",
+    "net/minecraft/world/level/chunk/LevelChunkSection":  "E:\\games\\MC server\\tmp\\jar-classes\\net\\minecraft\\world\\level\\chunk\\LevelChunkSection.class",
+    "net/minecraft/network/protocol/game/ClientboundLevelChunkWithLightPacket":  "E:\\games\\MC server\\tmp\\jar-classes\\net\\minecraft\\network\\protocol\\game\\ClientboundLevelChunkWithLightPacket.class"
+}
