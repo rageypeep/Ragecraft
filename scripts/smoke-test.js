@@ -79,6 +79,26 @@ async function pingServer(host, port, version) {
   });
 }
 
+async function getAvailablePort() {
+  return await new Promise((resolve, reject) => {
+    const server = net.createServer();
+
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      const port = address?.port;
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve(port);
+      });
+    });
+  });
+}
+
 function buildHandshakePacket({ protocolVersion, host, port, nextState }) {
   const payload = Buffer.concat([
     writeVarInt(protocolVersion),
@@ -196,7 +216,7 @@ function testCompatibilityChatFallback() {
 }
 
 async function testExperimental2612Compatibility() {
-  const port = 25571;
+  const port = await getAvailablePort();
   const compatibilityBaseData = require('minecraft-data')('1.21.11');
   const worldSavePath = path.join(process.cwd(), 'tmp', 'smoke-test', 'compat-world.json');
   const { server } = createMinecraftServer({
@@ -387,7 +407,8 @@ async function testExperimental2612Compatibility() {
   let treeLogCount = 0;
   const treeLogStateIds = new Set([
     world.treeBlockStateIds.oakLog,
-    world.treeBlockStateIds.birchLog
+    world.treeBlockStateIds.birchLog,
+    world.treeBlockStateIds.spruceLog
   ]);
 
   for (let x = -192; x <= 192; x += 8) {
@@ -565,11 +586,41 @@ async function testExperimental2612Compatibility() {
     minZ: -192,
     maxZ: 192
   }, decoratedWorld.decorationStateIds);
+  const oakLogCount = countMatchingStateIds(decoratedWorld, {
+    minX: -192,
+    maxX: 192,
+    minY: decoratedWorld.surfaceY + 1,
+    maxY: decoratedWorld.surfaceY + 16,
+    minZ: -192,
+    maxZ: 192
+  }, [decoratedWorld.treeBlockStateIds.oakLog]);
+  const birchLogCount = countMatchingStateIds(decoratedWorld, {
+    minX: -192,
+    maxX: 192,
+    minY: decoratedWorld.surfaceY + 1,
+    maxY: decoratedWorld.surfaceY + 16,
+    minZ: -192,
+    maxZ: 192
+  }, [decoratedWorld.treeBlockStateIds.birchLog]);
+  const spruceLogCount = countMatchingStateIds(decoratedWorld, {
+    minX: -192,
+    maxX: 192,
+    minY: decoratedWorld.surfaceY + 1,
+    maxY: decoratedWorld.surfaceY + 18,
+    minZ: -192,
+    maxZ: 192
+  }, [decoratedWorld.treeBlockStateIds.spruceLog]);
   assert(surfacePaletteCount > 0);
   assert(waterCount > 0);
   assert(undergroundVariantCount > 0);
   assert(oreCount > 0);
   assert(decorationCount > 0);
+  assert(oakLogCount > 0);
+  assert([oakLogCount, birchLogCount, spruceLogCount].filter((count) => count > 0).length >= 2);
+  assert.deepEqual(
+    decoratedWorld.populationFeaturePasses,
+    ['ponds', 'trees', 'decorations']
+  );
 
   const compatibilityMapChunkPacket = buildCompatibilityPlayPacket(
     server.protocolDataVersion,
@@ -743,14 +794,16 @@ async function testExperimental2612Compatibility() {
 
   const [client] = await loginPromise;
   assert.equal(client.username, 'CompatTester');
-  loginSocket.end();
+  loginSocket.destroy();
   await once(loginSocket, 'close');
 
   await closeMinecraftServer(server);
 }
 
 async function main() {
-  const port = 25570;
+  const port = await getAvailablePort();
+  const reloadPort = await getAvailablePort();
+  const defaultPort = await getAvailablePort();
   const baseData = require('minecraft-data')('1.21.11');
   const tempDataDir = path.join(process.cwd(), 'tmp', 'smoke-test');
   const worldSavePath = path.join(tempDataDir, 'world.json');
@@ -1260,7 +1313,7 @@ async function main() {
 
   const { server: reloadedServer } = createMinecraftServer({
     host: '127.0.0.1',
-    port: 25573,
+    port: reloadPort,
     version: '1.21.11',
     motd: 'Reloaded Smoke Test Server',
     worldSavePath,
@@ -1277,7 +1330,7 @@ async function main() {
 
   const { server: defaultServer } = createMinecraftServer({
     host: '127.0.0.1',
-    port: 25572,
+    port: defaultPort,
     worldSavePath: path.join(tempDataDir, 'default-world.json')
   });
   await once(defaultServer, 'listening');

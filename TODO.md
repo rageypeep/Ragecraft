@@ -1,5 +1,10 @@
 # Ragecraft TODO
 
+## Bugs
+
+- Investigate the underground pond/cave rendering artifact where repeated white "posts" appear under pond floors in generated terrain.
+- Investigate why blocks in that underground pond/cave artifact area can sometimes be broken but not placed back, suggesting a client/server state mismatch or chunk/interaction bounds bug.
+
 ## Next
 
 - [x] Replace the temporary compatibility remap table with a generated `26.1.2` packet map from Mojang reports.
@@ -22,9 +27,9 @@
 - [x] Add water generation for ponds, lakes, and simple coastlines.
 - [x] Add biome-specific surface palettes beyond the current grass/dirt/stone mix.
 - [x] Add surface decoration like tall grass, flowers, and mushrooms.
-- Add larger tree variety and better density rules per biome.
+- [x] Add larger tree variety and better density rules per biome.
 - [x] Add basic cliff, ridge, and shoreline shaping so biome borders feel less abrupt.
-- Add chunk-population passes for features that must cross chunk borders cleanly.
+- [x] Add chunk-population passes for features that must cross chunk borders cleanly.
 - Add bedrock/foundation rules and proper world bottom shaping.
 - Add a real server-side lighting model instead of the current pragmatic flat-sky path.
 - Add simple mob-safe spawn area rules so new players do not appear inside dense terrain or trees.

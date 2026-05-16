@@ -131,6 +131,8 @@ World generation note:
 - By default, Ragecraft mixes plains, forest, birch forest, and stony regions.
 - Generation is deterministic. Changing `MC_WORLD_SEED` creates a different world while keeping chunk streaming and reloads consistent.
 - Trees, caves, ponds, surface decoration, and underground variants are generated from the same seed.
+- Tree placement now has biome-specific density and shape rules, with plains, forest, birch, and sparse stony variants.
+- Cross-chunk terrain features are applied through dedicated population passes so ponds and trees stay clean across chunk borders.
 - Surface palettes vary by biome so forest and stony zones do not all look like the same grass-over-dirt slab.
 - Terrain height now comes from layered seeded noise, with ridge and cliff modulation, instead of obvious repeating wave patterns.
 - If you want one uniform biome again, set `MC_WORLD_MIXED_BIOMES=false`.
