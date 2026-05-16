@@ -34,6 +34,12 @@ The generated world currently includes:
 - surface decoration such as short grass, ferns, flowers, and mushrooms
 - a dedicated `plains` biome pass with flatter grassland shaping, sparse oak trees, denser grass cover, and tulip / wildflower patches
 - a dedicated `sunflower_plains` biome pass with sunflower-heavy grasslands built on top of the plains rules
+- a dedicated `forest` biome pass with denser oak growth, grass-first terrain, and fern / mushroom decoration
+- a dedicated `flower_forest` biome pass with lighter tree cover, heavier flower generation, and more frequent bee nests
+- a dedicated `birch_forest` biome pass with dense birch growth and classic birch-forest decoration
+- a dedicated `old_growth_birch_forest` biome pass with many taller birches, including trunks up to 14 blocks high
+- a dedicated `taiga` biome pass with conifer-heavy tree generation, ferns, large ferns, and sweet berry bushes
+- a dedicated `river` biome pass that carves water channels with mixed riverbeds, seagrass, and sparse bank vegetation
 - ridge / cliff variation so terrain no longer looks like simple wave math
 
 The `26.1.2` support is not native Prismarine support. Ragecraft uses `1.21.11` packet data as a base and patches newer registry, tag, and packet behavior manually.
@@ -130,13 +136,13 @@ Chunk streaming note:
 
 World generation note:
 
-- By default, Ragecraft mixes plains, forest, birch forest, and stony regions.
+- By default, Ragecraft mixes plains, sunflower plains, flower forest, forest, birch forest, old growth birch forest, taiga, and river regions.
 - Generation is deterministic. Changing `MC_WORLD_SEED` creates a different world while keeping chunk streaming and reloads consistent.
 - Trees, caves, ponds, surface decoration, and underground variants are generated from the same seed.
-- Biome work is now being split into dedicated files under `src/biomes/`, starting with `src/biomes/plains.js` and `src/biomes/sunflower-plains.js`.
-- Tree placement now has biome-specific density and shape rules, with plains, forest, birch, and sparse stony variants.
+- Biome work is now being split into dedicated files under `src/biomes/`, with `src/biomes/plains.js`, `src/biomes/sunflower-plains.js`, `src/biomes/forest.js`, `src/biomes/flower-forest.js`, `src/biomes/birch-forest.js`, `src/biomes/old-growth-birch-forest.js`, `src/biomes/taiga.js`, and `src/biomes/river.js` in place so far.
+- Tree placement now has biome-specific density and shape rules across plains, sunflower plains, flower forest, forest, and birch forest.
 - Cross-chunk terrain features are applied through dedicated population passes so ponds and trees stay clean across chunk borders.
-- Surface palettes vary by biome so forest and stony zones do not all look like the same grass-over-dirt slab.
+- Surface palettes and decoration vary by biome so the mixed world does not collapse into one repeated grass-over-dirt look.
 - Terrain height now comes from layered seeded noise, with ridge and cliff modulation, instead of obvious repeating wave patterns.
 - If you want one uniform biome again, set `MC_WORLD_MIXED_BIOMES=false`.
 

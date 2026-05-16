@@ -777,6 +777,150 @@ async function testExperimental2612Compatibility() {
   assert(sunflowerGrassCount > 200);
   assert(sunflowerOakLogCount > 0);
 
+  const forestWorld = createInitialWorldPackets(compatibilityBaseData, {
+    spawn: { x: 0, y: 96, z: 0, yaw: 0, pitch: 0 },
+    world: {
+      biome: 'forest',
+      mixedBiomes: false,
+      seed: 'deep-forest'
+    }
+  });
+  const forestDecorationCount = countMatchingStateIds(forestWorld, {
+    minX: -192,
+    maxX: 192,
+    minY: forestWorld.surfaceY,
+    maxY: forestWorld.surfaceY + 2,
+    minZ: -192,
+    maxZ: 192
+  }, [
+    compatibilityBaseData.blocksByName.fern.defaultState,
+    compatibilityBaseData.blocksByName.short_grass.defaultState,
+    compatibilityBaseData.blocksByName.brown_mushroom.defaultState,
+    compatibilityBaseData.blocksByName.red_mushroom.defaultState
+  ]);
+  const forestOakLogCount = countMatchingStateIds(forestWorld, {
+    minX: -192,
+    maxX: 192,
+    minY: forestWorld.surfaceY + 1,
+    maxY: forestWorld.surfaceY + 18,
+    minZ: -192,
+    maxZ: 192
+  }, [forestWorld.treeBlockStateIds.oakLog]);
+  assert.deepEqual(forestWorld.biomeMetadata.forest, {
+    key: 'forest',
+    label: 'Forest',
+    temperature: 0.7,
+    downfall: 0.8,
+    hasPrecipitation: true,
+    snow: 'none',
+    grassColor: '#79C05A',
+    foliageColor: '#59AE30'
+  });
+  assert(forestDecorationCount > 0);
+  assert(forestOakLogCount > 0);
+
+  const flowerForestWorld = createInitialWorldPackets(compatibilityBaseData, {
+    spawn: { x: 0, y: 96, z: 0, yaw: 0, pitch: 0 },
+    world: {
+      biome: 'flower_forest',
+      mixedBiomes: false,
+      seed: 'flower-power'
+    }
+  });
+  const flowerForestFlowerCount = countMatchingStateIds(flowerForestWorld, {
+    minX: -192,
+    maxX: 192,
+    minY: flowerForestWorld.surfaceY,
+    maxY: flowerForestWorld.surfaceY + 2,
+    minZ: -192,
+    maxZ: 192
+  }, [
+    compatibilityBaseData.blocksByName.dandelion.defaultState,
+    compatibilityBaseData.blocksByName.poppy.defaultState,
+    compatibilityBaseData.blocksByName.azure_bluet.defaultState,
+    compatibilityBaseData.blocksByName.oxeye_daisy.defaultState,
+    compatibilityBaseData.blocksByName.cornflower.defaultState,
+    compatibilityBaseData.blocksByName.orange_tulip.defaultState,
+    compatibilityBaseData.blocksByName.pink_tulip.defaultState,
+    compatibilityBaseData.blocksByName.red_tulip.defaultState,
+    compatibilityBaseData.blocksByName.white_tulip.defaultState
+  ]);
+  const flowerForestSunflowerCount = countMatchingStateIds(flowerForestWorld, {
+    minX: -192,
+    maxX: 192,
+    minY: flowerForestWorld.surfaceY,
+    maxY: flowerForestWorld.surfaceY + 3,
+    minZ: -192,
+    maxZ: 192
+  }, [
+    compatibilityBaseData.blocksByName.sunflower.defaultState,
+    compatibilityBaseData.blocksByName.sunflower.minStateId
+  ]);
+  const flowerForestOakLogCount = countMatchingStateIds(flowerForestWorld, {
+    minX: -192,
+    maxX: 192,
+    minY: flowerForestWorld.surfaceY + 1,
+    maxY: flowerForestWorld.surfaceY + 18,
+    minZ: -192,
+    maxZ: 192
+  }, [flowerForestWorld.treeBlockStateIds.oakLog]);
+  assert.deepEqual(flowerForestWorld.biomeMetadata.flower_forest, {
+    key: 'flower_forest',
+    label: 'Flower Forest',
+    temperature: 0.7,
+    downfall: 0.8,
+    hasPrecipitation: true,
+    snow: 'none',
+    grassColor: '#79C05A',
+    foliageColor: '#59AE30'
+  });
+  assert(flowerForestFlowerCount > 200);
+  assert.equal(flowerForestSunflowerCount, 0);
+  assert(flowerForestOakLogCount > 0);
+
+  const birchForestWorld = createInitialWorldPackets(compatibilityBaseData, {
+    spawn: { x: 0, y: 96, z: 0, yaw: 0, pitch: 0 },
+    world: {
+      biome: 'birch_forest',
+      mixedBiomes: false,
+      seed: 'paper-bark'
+    }
+  });
+  const birchForestDecorationCount = countMatchingStateIds(birchForestWorld, {
+    minX: -192,
+    maxX: 192,
+    minY: birchForestWorld.surfaceY,
+    maxY: birchForestWorld.surfaceY + 2,
+    minZ: -192,
+    maxZ: 192
+  }, [
+    compatibilityBaseData.blocksByName.fern.defaultState,
+    compatibilityBaseData.blocksByName.short_grass.defaultState,
+    compatibilityBaseData.blocksByName.dandelion.defaultState,
+    compatibilityBaseData.blocksByName.poppy.defaultState
+  ]);
+  const birchForestBirchLogCount = countMatchingStateIds(birchForestWorld, {
+    minX: -192,
+    maxX: 192,
+    minY: birchForestWorld.surfaceY + 1,
+    maxY: birchForestWorld.surfaceY + 18,
+    minZ: -192,
+    maxZ: 192
+  }, [birchForestWorld.treeBlockStateIds.birchLog]);
+  assert.deepEqual(birchForestWorld.biomeMetadata.birch_forest, {
+    key: 'birch_forest',
+    label: 'Birch Forest',
+    temperature: 0.6,
+    downfall: 0.6,
+    hasPrecipitation: true,
+    snow: 'none',
+    grassColor: '#88BB67',
+    foliageColor: '#6BA941',
+    waterColor: '#3F76E4'
+  });
+  assert(birchForestDecorationCount > 0);
+  assert(birchForestBirchLogCount > 0);
+
   const compatibilityMapChunkPacket = buildCompatibilityPlayPacket(
     server.protocolDataVersion,
     'map_chunk',

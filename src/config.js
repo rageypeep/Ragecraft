@@ -11,7 +11,7 @@ const DEFAULTS = {
   worldSavePath: 'data/world.json',
   welcomeMessage: 'Welcome to Ragecraft, {username}.',
   world: {
-    biome: 'plains',
+    biome: 'taiga',
     mixedBiomes: true,
     seed: 'ragecraft',
     chunkRadius: 2,

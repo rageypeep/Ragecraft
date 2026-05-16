@@ -48,6 +48,8 @@ const VOID_RESPAWN_Y = -32;
 const WORLD_TIME_TICK_INTERVAL_MS = 1000;
 const WORLD_TIME_TICK_AMOUNT = 20n;
 const DAY_LENGTH_TICKS = 24000n;
+const CHUNK_SEND_INTERVAL_MS = 50;
+const CHUNK_SEND_BATCH_SIZE = 8;
 
 function createMinecraftServer(overrides = {}) {
   const config = loadConfig(overrides);
@@ -199,6 +201,30 @@ function createMinecraftServer(overrides = {}) {
     }
   }
 
+  function broadcastAuthoritativeBlockStates(positions) {
+    const seen = new Set();
+
+    for (const position of positions) {
+      const blockChangePacket = buildBlockChangePacket(world, position, translateBlockStateId);
+
+      if (!blockChangePacket) {
+        continue;
+      }
+
+      const blockKey = `${blockChangePacket.location.x},${blockChangePacket.location.y},${blockChangePacket.location.z}`;
+
+      if (seen.has(blockKey)) {
+        continue;
+      }
+
+      seen.add(blockKey);
+
+      for (const client of connectedClients()) {
+        writePlayPacket(client, 'block_change', blockChangePacket);
+      }
+    }
+  }
+
   function sendInventorySlotUpdate(client, slot) {
     if (!client.inventoryState) {
       return;
@@ -268,6 +294,12 @@ function createMinecraftServer(overrides = {}) {
     writePlayPacket
   });
   server._ragecraftCleanupHandlers.push(() => itemDropManager.cleanup());
+  const chunkQueueInterval = setInterval(() => {
+    for (const client of connectedClients()) {
+      processChunkQueue(client);
+    }
+  }, CHUNK_SEND_INTERVAL_MS);
+  server._ragecraftCleanupHandlers.push(() => clearInterval(chunkQueueInterval));
 
   function sendInventoryBootstrap(client) {
     if (!client.inventoryState) {
@@ -290,6 +322,62 @@ function createMinecraftServer(overrides = {}) {
     };
   }
 
+  function ensureChunkQueueState(client) {
+    if (!client.pendingChunkQueue) {
+      client.pendingChunkQueue = [];
+    }
+
+    if (!client.pendingChunkKeys) {
+      client.pendingChunkKeys = new Set();
+    }
+  }
+
+  function enqueueChunkLoad(client, chunkX, chunkZ, centerChunk) {
+    ensureChunkQueueState(client);
+    const chunkKey = `${chunkX},${chunkZ}`;
+
+    if (client.loadedChunkKeys?.has(chunkKey) || client.pendingChunkKeys.has(chunkKey)) {
+      return;
+    }
+
+    client.pendingChunkKeys.add(chunkKey);
+    client.pendingChunkQueue.push({
+      chunkX,
+      chunkZ,
+      distance: Math.abs(chunkX - centerChunk.chunkX) + Math.abs(chunkZ - centerChunk.chunkZ)
+    });
+  }
+
+  function processChunkQueue(client) {
+    if (!client || !client.pendingChunkQueue || client.pendingChunkQueue.length === 0) {
+      return;
+    }
+
+    client.pendingChunkQueue.sort((left, right) => left.distance - right.distance);
+    let sent = 0;
+
+    while (client.pendingChunkQueue.length > 0 && sent < CHUNK_SEND_BATCH_SIZE) {
+      const nextChunk = client.pendingChunkQueue.shift();
+      const chunkKey = `${nextChunk.chunkX},${nextChunk.chunkZ}`;
+
+      client.pendingChunkKeys.delete(chunkKey);
+
+      if (client.loadedChunkKeys.has(chunkKey)) {
+        continue;
+      }
+
+      const chunkPacket = world.getChunkPacket(
+        nextChunk.chunkX,
+        nextChunk.chunkZ,
+        blockStateTranslator ? translateBlockStateId : null
+      );
+      writePlayPacket(client, 'map_chunk', chunkPacket);
+      writePlayPacket(client, 'update_light', createLightUpdatePacket(chunkPacket));
+      client.loadedChunkKeys.add(chunkKey);
+      sent += 1;
+    }
+  }
+
   function syncClientChunks(client, force = false) {
     if (!client.playerPosition) {
       return;
@@ -303,6 +391,8 @@ function createMinecraftServer(overrides = {}) {
       client.loadedChunkKeys = new Set();
     }
 
+    ensureChunkQueueState(client);
+
     if (
       force ||
       !client.chunkCenter ||
@@ -311,6 +401,8 @@ function createMinecraftServer(overrides = {}) {
     ) {
       client.chunkCenter = currentChunk;
       writePlayPacket(client, 'update_view_position', currentChunk);
+    } else if (!force) {
+      return;
     }
 
     for (let dz = -radius; dz <= radius; dz++) {
@@ -319,19 +411,7 @@ function createMinecraftServer(overrides = {}) {
         const chunkZ = currentChunk.chunkZ + dz;
         const chunkKey = `${chunkX},${chunkZ}`;
         desiredChunkKeys.add(chunkKey);
-
-        if (!force && client.loadedChunkKeys.has(chunkKey)) {
-          continue;
-        }
-
-        const chunkPacket = world.getChunkPacket(
-          chunkX,
-          chunkZ,
-          blockStateTranslator ? translateBlockStateId : null
-        );
-        writePlayPacket(client, 'map_chunk', chunkPacket);
-        writePlayPacket(client, 'update_light', createLightUpdatePacket(chunkPacket));
-        client.loadedChunkKeys.add(chunkKey);
+        enqueueChunkLoad(client, chunkX, chunkZ, currentChunk);
       }
     }
 
@@ -347,6 +427,19 @@ function createMinecraftServer(overrides = {}) {
       });
       client.loadedChunkKeys.delete(chunkKey);
     }
+
+    for (const chunkKey of Array.from(client.pendingChunkKeys)) {
+      if (desiredChunkKeys.has(chunkKey)) {
+        continue;
+      }
+
+      client.pendingChunkKeys.delete(chunkKey);
+    }
+
+    client.pendingChunkQueue = client.pendingChunkQueue.filter((entry) =>
+      desiredChunkKeys.has(`${entry.chunkX},${entry.chunkZ}`));
+
+    processChunkQueue(client);
   }
 
   function respawnPlayer(client) {
@@ -355,6 +448,8 @@ function createMinecraftServer(overrides = {}) {
 
     itemDropManager.setClientPosition(client, safeSpawn);
     client.loadedChunkKeys = new Set();
+    client.pendingChunkKeys = new Set();
+    client.pendingChunkQueue = [];
     client.chunkCenter = null;
     client.worldStateReady = false;
 
@@ -381,6 +476,8 @@ function createMinecraftServer(overrides = {}) {
     client.worldStateReady = false;
     itemDropManager.setClientPosition(client, bootstrapPackets.position);
     client.loadedChunkKeys = new Set();
+    client.pendingChunkKeys = new Set();
+    client.pendingChunkQueue = [];
     client.chunkCenter = null;
 
     console.log(`[join] ${client.username} (${address})`);
@@ -436,7 +533,7 @@ function createMinecraftServer(overrides = {}) {
 
       if (breakResult) {
         saveWorld();
-        broadcastAuthoritativeBlockState(packet.location);
+        broadcastAuthoritativeBlockStates(breakResult.changedPositions ?? [packet.location]);
 
         if (breakResult.droppedItem) {
           itemDropManager.spawnDrop(
@@ -458,10 +555,14 @@ function createMinecraftServer(overrides = {}) {
       const heldItem = getHotbarItem(client.inventoryState);
       const blockStateId = resolveBlockStateIdForItem(mcData, heldItem);
 
-      if (placedBlockLocation && blockStateId !== null && world.placeBlock(placedBlockLocation, blockStateId)) {
+      const placeResult = placedBlockLocation && blockStateId !== null
+        ? world.placeBlockDetailed(placedBlockLocation, blockStateId)
+        : false;
+
+      if (placeResult) {
         const consumed = consumeSelectedItem(client.inventoryState);
         saveWorld();
-        broadcastAuthoritativeBlockState(placedBlockLocation);
+        broadcastAuthoritativeBlockStates(placeResult.changedPositions ?? [placedBlockLocation]);
 
         if (consumed) {
           sendInventorySlotUpdate(client, consumed.slot);
