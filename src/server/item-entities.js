@@ -130,11 +130,13 @@ function createItemDropManager({
   }
 
   function setClientPosition(client, positionUpdate = {}) {
-    const currentPosition = client.playerPosition ?? { x: 0, y: 0, z: 0 };
+    const currentPosition = client.playerPosition ?? { x: 0, y: 0, z: 0, yaw: 0, pitch: 0 };
     client.playerPosition = {
       x: positionUpdate.x ?? currentPosition.x,
       y: positionUpdate.y ?? currentPosition.y,
-      z: positionUpdate.z ?? currentPosition.z
+      z: positionUpdate.z ?? currentPosition.z,
+      yaw: positionUpdate.yaw ?? currentPosition.yaw ?? 0,
+      pitch: positionUpdate.pitch ?? currentPosition.pitch ?? 0
     };
   }
 

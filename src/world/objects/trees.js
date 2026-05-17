@@ -1,6 +1,6 @@
-const TREE_CELL_SIZE = 7;
+const TREE_CELL_SIZE = 5;
 const TREE_CANOPY_RADIUS = 3;
-const TREE_SPAWN_CLEAR_RADIUS = 10;
+const TREE_SPAWN_CLEAR_RADIUS = 6;
 
 function buildTreeFeature(worldOptions, treeType, worldX, worldZ, topY, seedA, seedB, hashNoise2d) {
   const heightNoise = hashNoise2d(seedA, seedB, worldOptions.seedHash + 29);

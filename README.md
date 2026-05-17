@@ -125,7 +125,7 @@ Environment variables:
 | `MC_WORLD_STREAM_RADIUS` | `MC_VIEW_DISTANCE` | Streamed chunk radius around each player |
 | `MC_TERRAIN_THICKNESS` | `12` | Terrain thickness |
 | `MC_TERRAIN_AMPLITUDE` | `4` | Terrain height variation |
-| `MC_WORLD_BIOME` | `plains` | Biome used when mixed biomes are disabled |
+| `MC_WORLD_BIOME` | `taiga` | Biome used when mixed biomes are disabled |
 | `MC_SURFACE_BLOCK` | `grass_block` | Terrain surface block |
 | `MC_SOIL_BLOCK` | `dirt` | Soil block under the surface |
 | `MC_FOUNDATION_BLOCK` | `stone` | Deep terrain / foundation block |
@@ -141,6 +141,9 @@ World generation note:
 - By default, Ragecraft currently mixes plains, sunflower plains, flower forest, forest, birch forest, old growth birch forest, and taiga regions.
 - Generation is deterministic. Changing `MC_WORLD_SEED` creates a different world while keeping chunk streaming and reloads consistent.
 - Trees, caves, ponds, surface decoration, and underground variants are generated from the same seed.
+- To make a new world layout, set `MC_WORLD_SEED` to a new value before starting the server.
+- To force one biome everywhere, set `MC_WORLD_MIXED_BIOMES=false` and then set `MC_WORLD_BIOME` to one of: `plains`, `sunflower_plains`, `forest`, `flower_forest`, `birch_forest`, `old_growth_birch_forest`, `taiga`, `ocean`, `river`, or `beach`.
+- Seed and biome changes only affect newly generated terrain. If you want a completely fresh world, delete `data/world.json` or point `MC_WORLD_SAVE_PATH` at a different save file first.
 - Biome work is now being split into dedicated files under `src/biomes/`, with `src/biomes/plains.js`, `src/biomes/sunflower-plains.js`, `src/biomes/forest.js`, `src/biomes/flower-forest.js`, `src/biomes/birch-forest.js`, `src/biomes/old-growth-birch-forest.js`, `src/biomes/taiga.js`, and `src/biomes/river.js` in place so far.
 - Tree placement now has biome-specific density and shape rules across plains, sunflower plains, flower forest, forest, and birch forest.
 - Cross-chunk terrain features are applied through dedicated population passes so ponds and trees stay clean across chunk borders.

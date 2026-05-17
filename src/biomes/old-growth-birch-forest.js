@@ -42,20 +42,20 @@ function getTreeCandidate(context) {
   const densityNoise = hashNoise2d(cellX, cellZ, worldOptions.seedHash + 437);
   const selectorNoise = hashNoise2d(cellX, cellZ, worldOptions.seedHash + 453);
   const normalVariantNoise = hashNoise2d(cellX, cellZ, worldOptions.seedHash + 467);
-  const localX = 1 + Math.floor(hashNoise2d(cellX, cellZ, worldOptions.seedHash + 417) * 5);
-  const localZ = 1 + Math.floor(hashNoise2d(cellX, cellZ, worldOptions.seedHash + 423) * 5);
-  const worldX = (cellX * 7) + localX;
-  const worldZ = (cellZ * 7) + localZ;
+  const localX = 1 + Math.floor(hashNoise2d(cellX, cellZ, worldOptions.seedHash + 417) * 3);
+  const localZ = 1 + Math.floor(hashNoise2d(cellX, cellZ, worldOptions.seedHash + 423) * 3);
+  const worldX = (cellX * 5) + localX;
+  const worldZ = (cellZ * 5) + localZ;
 
   if (isNearSpawn(spawn, worldX, worldZ)) {
     return null;
   }
 
   const { topY } = getColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ);
-  const surfaceVariation = getSurfaceVariation(worldOptions, surfaceY, spawn, worldX, worldZ, 2);
-  const treeChance = 0.24 + (densityNoise * 0.18);
+  const surfaceVariation = getSurfaceVariation(worldOptions, surfaceY, spawn, worldX, worldZ, 1);
+  const treeChance = 0.52 + (densityNoise * 0.22);
 
-  if (candidateNoise > treeChance || surfaceVariation > 3) {
+  if (candidateNoise > treeChance || surfaceVariation > 9) {
     return null;
   }
 
@@ -65,7 +65,7 @@ function getTreeCandidate(context) {
     treeType = normalVariantNoise > 0.52 ? 'birch_tall' : 'birch_small';
   }
 
-  return buildTreeFeature(worldOptions, treeType, worldX, worldZ, topY, cellX, cellZ);
+  return buildTreeFeature(treeType, worldX, worldZ, topY);
 }
 
 function getDecorationFeature(context) {

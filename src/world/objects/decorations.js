@@ -19,9 +19,11 @@ function isGroundDecorationBase(worldOptions, stateId) {
     worldOptions.soilBlockStateId,
     worldOptions.terrainBlockStateIds.podzol,
     worldOptions.terrainBlockStateIds.rootedDirt,
+    worldOptions.terrainBlockStateIds.mud,
     worldOptions.terrainBlockStateIds.sand,
     worldOptions.terrainBlockStateIds.gravel,
-    worldOptions.terrainBlockStateIds.clay
+    worldOptions.terrainBlockStateIds.clay,
+    worldOptions.terrainBlockStateIds.stone
   ].includes(stateId);
 }
 
@@ -81,6 +83,139 @@ function getDecorationStateId(worldOptions, decorationStyle, worldX, worldZ, top
         ? worldOptions.decorationBlockStateIds.fern
         : worldOptions.decorationBlockStateIds.shortGrass;
     }
+  }
+
+  return null;
+}
+
+function getClimateDecorationFeature({ column, surfaceY, worldOptions, topY, topStateId }) {
+  if (column.waterTopY !== null || !column.climate) {
+    return null;
+  }
+
+  if (
+    ![
+      worldOptions.surfaceBlockStateId,
+      worldOptions.soilBlockStateId,
+      worldOptions.terrainBlockStateIds.podzol,
+      worldOptions.terrainBlockStateIds.rootedDirt,
+      worldOptions.terrainBlockStateIds.mud,
+      worldOptions.terrainBlockStateIds.sand,
+      worldOptions.terrainBlockStateIds.gravel,
+      worldOptions.terrainBlockStateIds.stone
+    ].includes(topStateId)
+  ) {
+    return null;
+  }
+
+  const snowlineY = surfaceY + 16;
+  const elevatedColdGround = topY >= snowlineY && column.climate.freezeChance > 0.44;
+  const exposedFrozenPeak = column.climate.heightFactor > 0.62 && column.climate.freezeChance > 0.68;
+
+  if (!elevatedColdGround && !exposedFrozenPeak) {
+    return null;
+  }
+
+  return {
+    lowerStateId: worldOptions.terrainBlockStateIds.snow
+  };
+}
+
+function getAdjacentFreshwaterColumns(worldOptions, surfaceY, spawn, worldX, worldZ, getColumnDescriptor) {
+  return [
+    [1, 0],
+    [-1, 0],
+    [0, 1],
+    [0, -1]
+  ].map(([dx, dz]) => getColumnDescriptor(worldOptions, surfaceY, spawn, worldX + dx, worldZ + dz))
+    .filter((column) =>
+      column.waterTopY !== null &&
+      ['lake', 'river'].includes(column.biomeProfile.biomeKey)
+    );
+}
+
+function getFreshwaterBankDecorationFeature({
+  column,
+  surfaceY,
+  spawn,
+  worldOptions,
+  worldX,
+  worldZ,
+  topY,
+  topStateId,
+  hashNoise2d,
+  valueNoise2d,
+  getColumnDescriptor
+}) {
+  if (column.waterTopY !== null) {
+    return null;
+  }
+
+  const adjacentFreshwaterColumns = getAdjacentFreshwaterColumns(
+    worldOptions,
+    surfaceY,
+    spawn,
+    worldX,
+    worldZ,
+    getColumnDescriptor
+  );
+
+  if (adjacentFreshwaterColumns.length === 0) {
+    return null;
+  }
+
+  const densityNoise = hashNoise2d(worldX, worldZ, worldOptions.seedHash + 7703);
+  const variantNoise = hashNoise2d(worldX, worldZ, worldOptions.seedHash + 7727);
+  const reedPatchNoise = valueNoise2d(worldX, worldZ, worldOptions.seedHash + 7759, 0.024);
+  const flowerPatchNoise = valueNoise2d(worldX, worldZ, worldOptions.seedHash + 7789, 0.016);
+  const mudFlatNoise = valueNoise2d(worldX, worldZ, worldOptions.seedHash + 7823, 0.02);
+  const grassyBank = [
+    worldOptions.surfaceBlockStateId,
+    worldOptions.soilBlockStateId,
+    worldOptions.terrainBlockStateIds.rootedDirt
+  ].includes(topStateId);
+  const muddyBank = topStateId === worldOptions.terrainBlockStateIds.mud;
+  const gravellyBank = topStateId === worldOptions.terrainBlockStateIds.gravel;
+  const softBank = grassyBank || muddyBank || topStateId === worldOptions.terrainBlockStateIds.sand;
+
+  if (softBank && reedPatchNoise > 0.58 && densityNoise > 0.42) {
+    return {
+      lowerStateId: worldOptions.decorationBlockStateIds.sugarCane,
+      upperStateId: variantNoise > 0.58 ? worldOptions.decorationBlockStateIds.sugarCane : null
+    };
+  }
+
+  if ((muddyBank || gravellyBank) && mudFlatNoise > 0.6 && densityNoise > 0.56) {
+    return {
+      lowerStateId: variantNoise > 0.44
+        ? worldOptions.decorationBlockStateIds.fern
+        : worldOptions.decorationBlockStateIds.shortGrass
+    };
+  }
+
+  if (grassyBank && flowerPatchNoise > 0.72 && densityNoise > 0.58) {
+    return {
+      lowerStateId: variantNoise > 0.66
+        ? worldOptions.decorationBlockStateIds.cornflower
+        : variantNoise > 0.33
+          ? worldOptions.decorationBlockStateIds.oxeyeDaisy
+          : worldOptions.decorationBlockStateIds.azureBluet
+    };
+  }
+
+  if (grassyBank && densityNoise > 0.88) {
+    return {
+      lowerStateId: worldOptions.decorationBlockStateIds.tallGrassLower,
+      upperStateId: worldOptions.decorationBlockStateIds.tallGrassUpper
+    };
+  }
+
+  if (grassyBank && densityNoise > 0.54) {
+    return {
+      lowerStateId: variantNoise > 0.48
+        ? worldOptions.decorationBlockStateIds.fern
+        : worldOptions.decorationBlockStateIds.shortGrass
+    };
   }
 
   return null;
@@ -154,37 +289,59 @@ function applySurfaceDecorationsToChunk({
 
       const column = getColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ);
       const biomeProfile = column.biomeProfile;
-      const decorationFeature = biomeProfile.biomeModule?.getDecorationFeature
-        ? biomeProfile.biomeModule.getDecorationFeature({
-          column,
-          surfaceY,
-          spawn,
-          worldOptions,
-          worldX,
-          worldZ,
-          topY,
-          topStateId,
-          hashNoise2d,
-          valueNoise2d,
-          getColumnDescriptor
-        })
-        : (() => {
-          const decorationStyle = biomeProfile.decorationStyle;
-          const decorationStateId = getDecorationStateId(
+      const climateDecorationFeature = getClimateDecorationFeature({
+        column,
+        surfaceY,
+        worldOptions,
+        topY,
+        topStateId
+      });
+      const freshwaterBankDecorationFeature = getFreshwaterBankDecorationFeature({
+        column,
+        surfaceY,
+        spawn,
+        worldOptions,
+        worldX,
+        worldZ,
+        topY,
+        topStateId,
+        hashNoise2d,
+        valueNoise2d,
+        getColumnDescriptor
+      });
+      const decorationFeature = climateDecorationFeature ?? freshwaterBankDecorationFeature ?? (
+        biomeProfile.biomeModule?.getDecorationFeature
+          ? biomeProfile.biomeModule.getDecorationFeature({
+            column,
+            surfaceY,
+            spawn,
             worldOptions,
-            decorationStyle,
             worldX,
             worldZ,
             topY,
             topStateId,
             hashNoise2d,
-            safeSurfaceY
-          );
+            valueNoise2d,
+            getColumnDescriptor
+          })
+          : (() => {
+            const decorationStyle = biomeProfile.decorationStyle;
+            const decorationStateId = getDecorationStateId(
+              worldOptions,
+              decorationStyle,
+              worldX,
+              worldZ,
+              topY,
+              topStateId,
+              hashNoise2d,
+              safeSurfaceY
+            );
 
-          return decorationStateId
-            ? { lowerStateId: decorationStateId }
-            : null;
-        })();
+            return decorationStateId
+              ? { lowerStateId: decorationStateId }
+              : null;
+          })()
+      );
 
       if (!decorationFeature) {
         continue;

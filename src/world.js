@@ -76,7 +76,13 @@ function createInitialWorldPackets(mcData, config, savedWorldState = { blocks: [
 
     if (!chunks.has(chunkKey)) {
       const chunk = createGeneratedChunk(worldOptions, surfaceY, config.spawn, chunkX, chunkZ);
-      chunks.set(chunkKey, { chunkX, chunkZ, chunk });
+      chunks.set(chunkKey, {
+        chunkX,
+        chunkZ,
+        chunk,
+        packetTemplate: null,
+        translatedPacketTemplates: new Map()
+      });
     }
 
     return chunks.get(chunkKey);
@@ -141,6 +147,39 @@ function createInitialWorldPackets(mcData, config, savedWorldState = { blocks: [
     const generatedChunk = ensureGeneratedChunk(chunkX, chunkZ);
 
     return generatedChunk.getBlockStateId(localPosition);
+  }
+
+  function invalidateChunkPacketTemplates(chunkEntry) {
+    if (!chunkEntry) {
+      return;
+    }
+
+    chunkEntry.packetTemplate = null;
+    chunkEntry.translatedPacketTemplates?.clear();
+  }
+
+  function getCachedChunkTemplate(chunkEntry, translateStateId = null) {
+    if (typeof translateStateId !== 'function') {
+      if (!chunkEntry.packetTemplate) {
+        chunkEntry.packetTemplate = createChunkTemplate(chunkEntry.chunk, surfaceY, worldOptions);
+      }
+
+      return chunkEntry.packetTemplate;
+    }
+
+    if (!chunkEntry.translatedPacketTemplates) {
+      chunkEntry.translatedPacketTemplates = new Map();
+    }
+
+    if (!chunkEntry.translatedPacketTemplates.has(translateStateId)) {
+      const translatedChunk = createTranslatedChunk(chunkEntry.chunk, translateStateId);
+      chunkEntry.translatedPacketTemplates.set(
+        translateStateId,
+        createChunkTemplate(translatedChunk, surfaceY, worldOptions)
+      );
+    }
+
+    return chunkEntry.translatedPacketTemplates.get(translateStateId);
   }
 
   function getBaseBlockState(position) {
@@ -228,6 +267,7 @@ function createInitialWorldPackets(mcData, config, savedWorldState = { blocks: [
     }
 
     chunkEntry.chunkEntry.chunk.setBlockStateId(chunkEntry.localPosition, stateId);
+    invalidateChunkPacketTemplates(chunkEntry.chunkEntry);
 
     const worldPosition = normalizePosition(chunkEntry.worldPosition);
     const baseStateId = getBaseBlockState(worldPosition);
@@ -332,13 +372,11 @@ function createInitialWorldPackets(mcData, config, savedWorldState = { blocks: [
   }
 
   function getChunkPacket(chunkX, chunkZ, translateStateId = null) {
-    const { chunk } = ensureChunk(chunkX, chunkZ);
-    const packetChunk = typeof translateStateId === 'function'
-      ? createTranslatedChunk(chunk, translateStateId)
-      : chunk;
+    const chunkEntry = ensureChunk(chunkX, chunkZ);
+    const template = getCachedChunkTemplate(chunkEntry, translateStateId);
 
     return createChunkPacket(chunkX, chunkZ, {
-      ...createChunkTemplate(packetChunk, surfaceY, worldOptions),
+      ...template,
       ...lightTemplate
     });
   }
@@ -445,10 +483,12 @@ function createInitialWorldPackets(mcData, config, savedWorldState = { blocks: [
       birch_forest: biomes.birchForest.metadata,
       flower_forest: biomes.flowerForest.metadata,
       forest: biomes.forest.metadata,
+      lake: biomes.lake.metadata,
       old_growth_birch_forest: biomes.oldGrowthBirchForest.metadata,
       ocean: biomes.ocean.metadata,
       plains: biomes.plains.metadata,
       river: biomes.river.metadata,
+      stony_shore: biomes.stonyShore.metadata,
       sunflower_plains: biomes.sunflowerPlains.metadata,
       taiga: biomes.taiga.metadata
     },

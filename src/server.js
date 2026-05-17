@@ -48,8 +48,9 @@ const VOID_RESPAWN_Y = -32;
 const WORLD_TIME_TICK_INTERVAL_MS = 1000;
 const WORLD_TIME_TICK_AMOUNT = 20n;
 const DAY_LENGTH_TICKS = 24000n;
-const CHUNK_SEND_INTERVAL_MS = 50;
-const CHUNK_SEND_BATCH_SIZE = 8;
+const CHUNK_SEND_INTERVAL_MS = 25;
+const CHUNK_SEND_BATCH_SIZE = 2;
+const CHUNK_SEND_TIME_BUDGET_MS = 16;
 
 function createMinecraftServer(overrides = {}) {
   const config = loadConfig(overrides);
@@ -355,13 +356,52 @@ function createMinecraftServer(overrides = {}) {
     });
   }
 
-  function compareChunkQueueEntries(left, right) {
+  function getChunkQueuePriority(entry, client) {
+    if (!client?.playerPosition || !Number.isFinite(client.playerPosition.yaw)) {
+      return {
+        distanceSquared: entry.distanceSquared,
+        score: entry.distanceSquared
+      };
+    }
+
+    const yawRadians = (client.playerPosition.yaw * Math.PI) / 180;
+    const forwardX = -Math.sin(yawRadians);
+    const forwardZ = Math.cos(yawRadians);
+    const sampleDeltaX = entry.deltaX + (entry.deltaX === 0 ? 0 : Math.sign(entry.deltaX) * 0.5);
+    const sampleDeltaZ = entry.deltaZ + (entry.deltaZ === 0 ? 0 : Math.sign(entry.deltaZ) * 0.5);
+    const forwardDistance = (sampleDeltaX * forwardX) + (sampleDeltaZ * forwardZ);
+    const sideDistance = Math.abs((sampleDeltaX * -forwardZ) + (sampleDeltaZ * forwardX));
+    const score = entry.distanceSquared +
+      (sideDistance * 0.75) -
+      (Math.max(0, forwardDistance) * 2.5) +
+      (Math.max(0, -forwardDistance) * 3);
+
+    return {
+      distanceSquared: entry.distanceSquared,
+      forwardDistance,
+      score,
+      sideDistance
+    };
+  }
+
+  function compareChunkQueueEntries(left, right, client) {
+    const leftPriority = getChunkQueuePriority(left, client);
+    const rightPriority = getChunkQueuePriority(right, client);
+
+    if (leftPriority.score !== rightPriority.score) {
+      return leftPriority.score - rightPriority.score;
+    }
+
     if (left.distanceSquared !== right.distanceSquared) {
       return left.distanceSquared - right.distanceSquared;
     }
 
     if (left.distance !== right.distance) {
       return left.distance - right.distance;
+    }
+
+    if ((leftPriority.forwardDistance ?? 0) !== (rightPriority.forwardDistance ?? 0)) {
+      return (rightPriority.forwardDistance ?? 0) - (leftPriority.forwardDistance ?? 0);
     }
 
     const leftAxisBias = Math.abs(left.deltaX) === Math.abs(left.deltaZ) ? 1 : 0;
@@ -383,10 +423,19 @@ function createMinecraftServer(overrides = {}) {
       return;
     }
 
-    client.pendingChunkQueue.sort(compareChunkQueueEntries);
+    client.pendingChunkQueue.sort((left, right) => compareChunkQueueEntries(left, right, client));
+    const startedAt = process.hrtime.bigint();
     let sent = 0;
 
     while (client.pendingChunkQueue.length > 0 && sent < CHUNK_SEND_BATCH_SIZE) {
+      if (sent > 0) {
+        const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+
+        if (elapsedMs >= CHUNK_SEND_TIME_BUDGET_MS) {
+          break;
+        }
+      }
+
       const nextChunk = client.pendingChunkQueue.shift();
       const chunkKey = `${nextChunk.chunkX},${nextChunk.chunkZ}`;
 
@@ -630,7 +679,9 @@ function createMinecraftServer(overrides = {}) {
       syncClientChunks(client);
       itemDropManager.attemptPickup(client);
     });
-    client.on('look', () => {
+    client.on('look', (packet) => {
+      itemDropManager.setClientPosition(client, packet);
+      processChunkQueue(client);
       itemDropManager.attemptPickup(client);
     });
     client.on('flying', () => {

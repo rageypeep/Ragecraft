@@ -17,7 +17,7 @@ function createProfile(worldOptions) {
     biomeId: worldOptions.biomeIds.river,
     metadata: RIVER_METADATA,
     allowWater: true,
-    shoreBlockStateId: worldOptions.terrainBlockStateIds.sand,
+    shoreBlockStateId: worldOptions.terrainBlockStateIds.mud,
     surfaceBlockStateId: worldOptions.surfaceBlockStateId,
     soilBlockStateId: worldOptions.soilBlockStateId,
     foundationBlockStateId: worldOptions.foundationBlockStateId,
@@ -40,10 +40,10 @@ function getTreeCandidate(context) {
   } = context;
   const candidateNoise = hashNoise2d(cellX, cellZ, worldOptions.seedHash + 611);
   const selectorNoise = hashNoise2d(cellX, cellZ, worldOptions.seedHash + 653);
-  const localX = 1 + Math.floor(hashNoise2d(cellX, cellZ, worldOptions.seedHash + 617) * 5);
-  const localZ = 1 + Math.floor(hashNoise2d(cellX, cellZ, worldOptions.seedHash + 623) * 5);
-  const worldX = (cellX * 7) + localX;
-  const worldZ = (cellZ * 7) + localZ;
+  const localX = 1 + Math.floor(hashNoise2d(cellX, cellZ, worldOptions.seedHash + 617) * 3);
+  const localZ = 1 + Math.floor(hashNoise2d(cellX, cellZ, worldOptions.seedHash + 623) * 3);
+  const worldX = (cellX * 5) + localX;
+  const worldZ = (cellZ * 5) + localZ;
 
   if (isNearSpawn(spawn, worldX, worldZ)) {
     return null;
@@ -63,7 +63,7 @@ function getTreeCandidate(context) {
   }
 
   const treeType = selectorNoise > 0.7 ? 'oak_bushy' : 'oak_small';
-  return buildTreeFeature(worldOptions, treeType, worldX, worldZ, column.topY, cellX, cellZ);
+  return buildTreeFeature(treeType, worldX, worldZ, column.topY);
 }
 
 function getDecorationFeature(context) {
@@ -85,11 +85,12 @@ function getDecorationFeature(context) {
   if (column?.waterTopY !== null) {
     if (
       topY <= column.waterTopY - 1 &&
-      densityNoise > 0.45 &&
+      densityNoise > 0.28 &&
       [
         worldOptions.terrainBlockStateIds.sand,
         worldOptions.terrainBlockStateIds.gravel,
         worldOptions.terrainBlockStateIds.clay,
+        worldOptions.terrainBlockStateIds.mud,
         worldOptions.soilBlockStateId
       ].includes(topStateId)
     ) {
@@ -102,7 +103,7 @@ function getDecorationFeature(context) {
     return null;
   }
 
-  if (topStateId !== worldOptions.surfaceBlockStateId) {
+  if (![worldOptions.surfaceBlockStateId, worldOptions.terrainBlockStateIds.mud].includes(topStateId)) {
     return null;
   }
 
