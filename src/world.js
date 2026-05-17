@@ -495,7 +495,13 @@ function createInitialWorldPackets(mcData, config, savedWorldState = { blocks: [
     topBlockStateId,
     treeBlockStateIds: worldOptions.treeBlockStateIds
     ,
-    populationFeaturePasses: ['ponds', 'trees', 'decorations']
+    populationFeaturePasses: ['ponds', 'trees', 'decorations'],
+    hasChunk(chunkX, chunkZ) {
+      return chunks.has(getChunkKey(chunkX, chunkZ));
+    },
+    preGenerateChunk(chunkX, chunkZ) {
+      ensureChunk(chunkX, chunkZ);
+    }
   };
 }
 
