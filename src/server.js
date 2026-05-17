@@ -49,8 +49,10 @@ const WORLD_TIME_TICK_INTERVAL_MS = 1000;
 const WORLD_TIME_TICK_AMOUNT = 20n;
 const DAY_LENGTH_TICKS = 24000n;
 const CHUNK_SEND_INTERVAL_MS = 25;
-const CHUNK_SEND_BATCH_SIZE = 2;
-const CHUNK_SEND_TIME_BUDGET_MS = 16;
+const CHUNK_SEND_BATCH_SIZE = 10;
+const CHUNK_SEND_TIME_BUDGET_MS = 30;
+const CHUNK_GEN_BATCH_SIZE = 1;
+const CHUNK_GEN_TIME_BUDGET_MS = 15;
 
 function createMinecraftServer(overrides = {}) {
   const config = loadConfig(overrides);
@@ -418,6 +420,64 @@ function createMinecraftServer(overrides = {}) {
     return left.deltaX - right.deltaX;
   }
 
+  function cancelChunkGeneration(client) {
+    if (client._chunkGenHandle) {
+      clearImmediate(client._chunkGenHandle);
+      client._chunkGenHandle = null;
+    }
+
+    client._chunkGenRunning = false;
+  }
+
+  function scheduleChunkGeneration(client) {
+    if (client._chunkGenRunning || !client.pendingChunkQueue || client.pendingChunkQueue.length === 0) {
+      return;
+    }
+
+    client._chunkGenRunning = true;
+
+    const generateNextBatch = () => {
+      client._chunkGenHandle = null;
+
+      if (!client.pendingChunkQueue || client.pendingChunkQueue.length === 0) {
+        client._chunkGenRunning = false;
+        return;
+      }
+
+      const startedAt = process.hrtime.bigint();
+      let hitBudget = false;
+
+      for (const entry of client.pendingChunkQueue) {
+        const chunkKey = `${entry.chunkX},${entry.chunkZ}`;
+
+        if (client.loadedChunkKeys && client.loadedChunkKeys.has(chunkKey)) {
+          continue;
+        }
+
+        if (world.hasChunk(entry.chunkX, entry.chunkZ)) {
+          continue;
+        }
+
+        world.preGenerateChunk(entry.chunkX, entry.chunkZ);
+
+        const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+
+        if (elapsedMs >= CHUNK_GEN_TIME_BUDGET_MS) {
+          hitBudget = true;
+          break;
+        }
+      }
+
+      if (hitBudget) {
+        client._chunkGenHandle = setImmediate(generateNextBatch);
+      } else {
+        client._chunkGenRunning = false;
+      }
+    };
+
+    client._chunkGenHandle = setImmediate(generateNextBatch);
+  }
+
   function processChunkQueue(client) {
     if (!client || !client.pendingChunkQueue || client.pendingChunkQueue.length === 0) {
       return;
@@ -426,8 +486,14 @@ function createMinecraftServer(overrides = {}) {
     client.pendingChunkQueue.sort((left, right) => compareChunkQueueEntries(left, right, client));
     const startedAt = process.hrtime.bigint();
     let sent = 0;
+    let generated = 0;
+    const toRemove = new Set();
 
-    while (client.pendingChunkQueue.length > 0 && sent < CHUNK_SEND_BATCH_SIZE) {
+    for (let i = 0; i < client.pendingChunkQueue.length; i++) {
+      if (sent >= CHUNK_SEND_BATCH_SIZE) {
+        break;
+      }
+
       if (sent > 0) {
         const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
 
@@ -436,25 +502,41 @@ function createMinecraftServer(overrides = {}) {
         }
       }
 
-      const nextChunk = client.pendingChunkQueue.shift();
-      const chunkKey = `${nextChunk.chunkX},${nextChunk.chunkZ}`;
-
-      client.pendingChunkKeys.delete(chunkKey);
+      const entry = client.pendingChunkQueue[i];
+      const chunkKey = `${entry.chunkX},${entry.chunkZ}`;
 
       if (client.loadedChunkKeys.has(chunkKey)) {
+        toRemove.add(i);
+        client.pendingChunkKeys.delete(chunkKey);
         continue;
       }
 
+      if (!world.hasChunk(entry.chunkX, entry.chunkZ)) {
+        if (generated >= CHUNK_GEN_BATCH_SIZE) {
+          continue;
+        }
+
+        generated += 1;
+      }
+
       const chunkPacket = world.getChunkPacket(
-        nextChunk.chunkX,
-        nextChunk.chunkZ,
+        entry.chunkX,
+        entry.chunkZ,
         blockStateTranslator ? translateBlockStateId : null
       );
       writePlayPacket(client, 'map_chunk', chunkPacket);
       writePlayPacket(client, 'update_light', createLightUpdatePacket(chunkPacket));
       client.loadedChunkKeys.add(chunkKey);
+      client.pendingChunkKeys.delete(chunkKey);
+      toRemove.add(i);
       sent += 1;
     }
+
+    if (toRemove.size > 0) {
+      client.pendingChunkQueue = client.pendingChunkQueue.filter((_, i) => !toRemove.has(i));
+    }
+
+    scheduleChunkGeneration(client);
   }
 
   function syncClientChunks(client, force = false) {
@@ -480,6 +562,13 @@ function createMinecraftServer(overrides = {}) {
     ) {
       client.chunkCenter = currentChunk;
       writePlayPacket(client, 'update_view_position', currentChunk);
+
+      for (const entry of client.pendingChunkQueue) {
+        entry.deltaX = entry.chunkX - currentChunk.chunkX;
+        entry.deltaZ = entry.chunkZ - currentChunk.chunkZ;
+        entry.distance = Math.abs(entry.deltaX) + Math.abs(entry.deltaZ);
+        entry.distanceSquared = (entry.deltaX * entry.deltaX) + (entry.deltaZ * entry.deltaZ);
+      }
     } else if (!force) {
       return;
     }
@@ -525,6 +614,7 @@ function createMinecraftServer(overrides = {}) {
     const safeSpawn = world.getSafeSpawnPosition(config.spawn);
     const teleportId = allocateTeleportId(client);
 
+    cancelChunkGeneration(client);
     itemDropManager.setClientPosition(client, safeSpawn);
     client.loadedChunkKeys = new Set();
     client.pendingChunkKeys = new Set();
@@ -562,6 +652,7 @@ function createMinecraftServer(overrides = {}) {
     console.log(`[join] ${client.username} (${address})`);
 
     client.on('end', () => {
+      cancelChunkGeneration(client);
       console.log(`[leave] ${client.username} (${address})`);
       broadcastSystemMessage(`${client.username} left the game.`, client);
     });
