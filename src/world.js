@@ -441,10 +441,12 @@ function createInitialWorldPackets(mcData, config, savedWorldState = { blocks: [
     waterBlockStateId: worldOptions.terrainBlockStateIds.water,
     decorationStateIds: Object.values(worldOptions.decorationBlockStateIds).filter(Boolean),
     biomeMetadata: {
+      beach: biomes.beach.metadata,
       birch_forest: biomes.birchForest.metadata,
       flower_forest: biomes.flowerForest.metadata,
       forest: biomes.forest.metadata,
       old_growth_birch_forest: biomes.oldGrowthBirchForest.metadata,
+      ocean: biomes.ocean.metadata,
       plains: biomes.plains.metadata,
       river: biomes.river.metadata,
       sunflower_plains: biomes.sunflowerPlains.metadata,

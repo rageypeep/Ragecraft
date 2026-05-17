@@ -167,6 +167,8 @@ function resolveWorldOptions(mcData, config = {}) {
     chunkRadius: Math.max(1, worldConfig.chunkRadius),
     streamRadius: Math.max(1, configuredStreamRadius),
     biomeIds: {
+      beach: resolveBiomeId(mcData, ['beach'], fallbackBiomeId),
+      ocean: resolveBiomeId(mcData, ['ocean'], fallbackBiomeId),
       plains: resolveBiomeId(mcData, ['plains'], fallbackBiomeId),
       river: resolveBiomeId(mcData, ['river'], fallbackBiomeId),
       sunflowerPlains: resolveBiomeId(mcData, ['sunflower_plains', 'plains'], fallbackBiomeId),
@@ -237,6 +239,7 @@ function resolveWorldOptions(mcData, config = {}) {
       podzol: resolveConfiguredBlockStateId(mcData, 'podzol', worldConfig.surfaceBlock),
       rootedDirt: resolveConfiguredBlockStateId(mcData, 'rooted_dirt', worldConfig.soilBlock),
       sand: resolveConfiguredBlockStateId(mcData, 'sand', worldConfig.soilBlock),
+      sandstone: resolveConfiguredBlockStateId(mcData, 'sandstone', worldConfig.foundationBlock),
       water: resolveConfiguredBlockStateId(mcData, 'water', 'air'),
       waterMax: mcData.blocksByName.water?.maxStateId ?? resolveConfiguredBlockStateId(mcData, 'water', 'air')
     },
@@ -332,151 +335,28 @@ function getTaigaNoise(worldX, worldZ, seedOffset = 0) {
   return valueNoise2d(worldX, worldZ, seedOffset + 1097, 0.0058);
 }
 
-function getRiverDistance(worldX, worldZ, seedOffset = 0) {
-  const warpX = worldX + (fbmNoise2d(worldX, worldZ, seedOffset + 1151, {
-    frequency: 0.01,
-    octaves: 2,
-    persistence: 0.5,
+function getBeachNoise(worldX, worldZ, seedOffset = 0) {
+  return valueNoise2d(worldX, worldZ, seedOffset + 1119, 0.009);
+}
+
+function getOceanNoise(worldX, worldZ, seedOffset = 0) {
+  return fbmNoise2d(worldX, worldZ, seedOffset + 1141, {
+    frequency: 0.0044,
+    octaves: 3,
+    persistence: 0.55,
     lacunarity: 2
-  }) * 28);
-  const warpZ = worldZ + (fbmNoise2d(worldX, worldZ, seedOffset + 1177, {
-    frequency: 0.01,
-    octaves: 2,
-    persistence: 0.5,
-    lacunarity: 2
-  }) * 28);
-
-  return Math.abs(signedValueNoise2d(warpX, warpZ, seedOffset + 1201, 0.0085));
-}
-
-function getRiverShape(worldX, worldZ, seedOffset = 0) {
-  const distance = getRiverDistance(worldX, worldZ, seedOffset);
-  const poolNoise = valueNoise2d(worldX, worldZ, seedOffset + 1237, 0.0042);
-  const lakeStrength = clamp((poolNoise - 0.66) / 0.34, 0, 1);
-  const channelWidth = lerp(0.058, 0.082, lakeStrength);
-  const islandNoise = valueNoise2d(worldX, worldZ, seedOffset + 1279, 0.012);
-
-  return {
-    distance,
-    poolNoise,
-    lakeStrength,
-    channelWidth,
-    islandNoise
-  };
-}
-
-function hasRiverCorridorSupport(worldX, worldZ, seedOffset, supportWidth) {
-  const supportLimit = supportWidth * 1.2;
-  const axialStep = 4;
-  const diagonalStep = 3;
-  const samples = [
-    [
-      getRiverDistance(worldX - axialStep, worldZ, seedOffset),
-      getRiverDistance(worldX + axialStep, worldZ, seedOffset)
-    ],
-    [
-      getRiverDistance(worldX, worldZ - axialStep, seedOffset),
-      getRiverDistance(worldX, worldZ + axialStep, seedOffset)
-    ],
-    [
-      getRiverDistance(worldX - diagonalStep, worldZ - diagonalStep, seedOffset),
-      getRiverDistance(worldX + diagonalStep, worldZ + diagonalStep, seedOffset)
-    ],
-    [
-      getRiverDistance(worldX - diagonalStep, worldZ + diagonalStep, seedOffset),
-      getRiverDistance(worldX + diagonalStep, worldZ - diagonalStep, seedOffset)
-    ]
-  ];
-
-  return samples.some(([a, b]) => a < supportLimit && b < supportLimit);
-}
-
-function shouldUseRiverBiome(worldOptions, surfaceY, worldX, worldZ) {
-  const riverShape = getRiverShape(worldX, worldZ, worldOptions.seedHash);
-
-  if (riverShape.distance >= riverShape.channelWidth) {
-    return false;
-  }
-
-  const localRelief = getTerrainRelief(worldOptions, surfaceY, worldX, worldZ, 3);
-  const gentleReliefLimit = riverShape.lakeStrength > 0.82 ? 2 : 1;
-
-  if (localRelief > gentleReliefLimit) {
-    return false;
-  }
-
-  const baseTopY = getTerrainHeight(
-    worldX,
-    worldZ,
-    surfaceY,
-    worldOptions.terrainAmplitude,
-    worldOptions.seedHash
-  );
-  const waterLevel = surfaceY - 1;
-
-  if (baseTopY > waterLevel + 1) {
-    return false;
-  }
-
-  if (!hasRiverCorridorSupport(worldX, worldZ, worldOptions.seedHash, riverShape.channelWidth)) {
-    return false;
-  }
-
-  return true;
-}
-
-function getRiverOverlay(worldOptions, surfaceY, worldX, worldZ, baseTopY) {
-  const riverShape = getRiverShape(worldX, worldZ, worldOptions.seedHash);
-  const bankWidth = riverShape.channelWidth + lerp(0.05, 0.09, riverShape.lakeStrength);
-
-  if (riverShape.distance >= bankWidth) {
-    return null;
-  }
-
-  const waterLevel = surfaceY - 1;
-
-  if (baseTopY > waterLevel + 2) {
-    return null;
-  }
-
-  const localRelief = getTerrainRelief(worldOptions, surfaceY, worldX, worldZ, 3);
-  const reliefLimit = riverShape.lakeStrength > 0.9 ? 2 : 1;
-
-  if (localRelief > reliefLimit) {
-    return null;
-  }
-
-  if (!hasRiverCorridorSupport(worldX, worldZ, worldOptions.seedHash, riverShape.channelWidth)) {
-    return null;
-  }
-
-  const bankStrength = smoothstep(1 - clamp(riverShape.distance / bankWidth, 0, 1));
-  const wetStrength = smoothstep(1 - clamp(riverShape.distance / riverShape.channelWidth, 0, 1));
-  const channelActive = wetStrength > 0.8;
-  const maxDepth = 1 + Math.round(riverShape.lakeStrength);
-  const channelDepth = channelActive
-    ? Math.max(1, Math.round(lerp(1, maxDepth, wetStrength)))
-    : 0;
-  const riverbedY = waterLevel - channelDepth;
-  const bankTargetY = waterLevel + 1;
-  const loweredBankY = Math.round(lerp(baseTopY, bankTargetY, bankStrength * 0.88));
-  const bankTopY = Math.min(baseTopY, loweredBankY);
-
-  return {
-    active: true,
-    bankStrength,
-    wetStrength,
-    localRelief,
-    riverShape,
-    riverbedY,
-    waterLevel,
-    bankTopY,
-    waterBottomY: channelActive ? riverbedY + 1 : null,
-    waterTopY: channelActive ? waterLevel : null
-  };
+  });
 }
 
 function getLegacyBiomeProfile(worldOptions, biomeKey) {
+  if (biomeKey === 'beach') {
+    return biomes.beach.createProfile(worldOptions);
+  }
+
+  if (biomeKey === 'ocean') {
+    return biomes.ocean.createProfile(worldOptions);
+  }
+
   if (biomeKey === 'river') {
     return biomes.plains.createProfile(worldOptions);
   }
@@ -510,6 +390,14 @@ function getLegacyBiomeProfile(worldOptions, biomeKey) {
 
 function getBiomeProfile(worldOptions, worldX, worldZ) {
   if (!worldOptions.mixedBiomes) {
+    if (worldOptions.biomeName.includes('ocean')) {
+      return biomes.ocean.createProfile(worldOptions);
+    }
+
+    if (worldOptions.biomeName.includes('beach')) {
+      return biomes.beach.createProfile(worldOptions);
+    }
+
     if (worldOptions.biomeName.includes('river')) {
       return biomes.plains.createProfile(worldOptions);
     }
@@ -642,6 +530,39 @@ function getLandBiomeProfile(worldOptions, worldX, worldZ) {
   };
 }
 
+function shouldUseBeachBiome(worldOptions, surfaceY, worldX, worldZ, baseTopY) {
+  const beachNoise = getBeachNoise(worldX, worldZ, worldOptions.seedHash);
+  const localRelief = getTerrainRelief(worldOptions, surfaceY, worldX, worldZ, 2);
+  const elevationAboveWater = baseTopY - (surfaceY - 1);
+
+  if (elevationAboveWater > 2) {
+    return false;
+  }
+
+  if (localRelief > 2) {
+    return false;
+  }
+
+  return beachNoise > 0.62;
+}
+
+function shouldUseOceanBiome(worldOptions, surfaceY, worldX, worldZ, baseTopY) {
+  const waterLevel = surfaceY - 1;
+  const elevationAboveWater = baseTopY - waterLevel;
+  const localRelief = getTerrainRelief(worldOptions, surfaceY, worldX, worldZ, 3);
+  const oceanNoise = getOceanNoise(worldX, worldZ, worldOptions.seedHash);
+
+  if (elevationAboveWater > 0) {
+    return false;
+  }
+
+  if (localRelief > 4) {
+    return false;
+  }
+
+  return oceanNoise > 0.08;
+}
+
 function getColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ) {
   const cacheKey = [
     worldOptions.seedHash,
@@ -675,31 +596,45 @@ function getColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ) {
     worldOptions.terrainAmplitude + landBiomeProfile.terrainAmplitudeOffset,
     worldOptions.seedHash
   );
-  const riverOverlay = null;
-  const biomeProfile = landBiomeProfile;
+  const fixedOceanProfile = !worldOptions.mixedBiomes && worldOptions.biomeName.includes('ocean')
+    ? biomes.ocean.createProfile(worldOptions)
+    : null;
+  const oceanProfile = fixedOceanProfile || (
+    worldOptions.mixedBiomes &&
+    shouldUseOceanBiome(worldOptions, surfaceY, worldX, worldZ, baseTopY)
+      ? biomes.ocean.createProfile(worldOptions)
+      : null
+  );
+  const biomeProfile = oceanProfile
+    ? oceanProfile
+    : (
+      worldOptions.mixedBiomes &&
+      shouldUseBeachBiome(worldOptions, surfaceY, worldX, worldZ, baseTopY)
+    )
+      ? biomes.beach.createProfile(worldOptions)
+      : landBiomeProfile;
   const soilDepth = Math.max(3, Math.floor(worldOptions.terrainThickness / 3));
+  const waterLevel = surfaceY - 1;
 
-  if (riverOverlay?.active) {
-    const bedNoise = hashNoise2d(worldX, worldZ, worldOptions.seedHash + 1259);
-    const riverbedStateId = bedNoise > 0.84
+  if (biomeProfile.biomeKey === 'ocean') {
+    const depthNoise = valueNoise2d(worldX, worldZ, worldOptions.seedHash + 1433, 0.011);
+    const floorNoise = hashNoise2d(worldX, worldZ, worldOptions.seedHash + 1469);
+    const floorDepth = 3 + Math.round(depthNoise * 6);
+    const oceanFloorY = Math.min(baseTopY, waterLevel - floorDepth);
+    const oceanFloorStateId = floorNoise > 0.88
       ? worldOptions.terrainBlockStateIds.clay
-      : bedNoise > 0.58
+      : floorNoise > 0.62
         ? worldOptions.terrainBlockStateIds.gravel
-        : bedNoise > 0.32
-          ? worldOptions.terrainBlockStateIds.sand
-          : biomeProfile.soilBlockStateId;
-    const topY = riverOverlay.waterTopY !== null
-      ? riverOverlay.riverbedY
-      : Math.min(baseTopY, riverOverlay.bankTopY);
+        : worldOptions.terrainBlockStateIds.sand;
 
     return cacheAndReturn({
       biomeProfile,
-      floorStartY: topY - (worldOptions.terrainThickness - 1),
-      soilStartY: Math.max(topY - (soilDepth - 1), topY - 2),
-      topBlockStateId: riverOverlay.waterTopY !== null ? riverbedStateId : biomeProfile.surfaceBlockStateId,
-      topY,
-      waterBottomY: riverOverlay.waterBottomY,
-      waterTopY: riverOverlay.waterTopY
+      floorStartY: oceanFloorY - (worldOptions.terrainThickness - 1),
+      soilStartY: Math.max(oceanFloorY - (soilDepth - 1), oceanFloorY - 3),
+      topBlockStateId: oceanFloorStateId,
+      topY: oceanFloorY,
+      waterBottomY: oceanFloorY + 1,
+      waterTopY: waterLevel
     });
   }
 
@@ -775,6 +710,17 @@ function resolveUndergroundBlockStateId(worldOptions, biomeProfile, worldX, worl
   }
 
   const depth = topY - worldY;
+
+  if (biomeProfile.biomeKey === 'beach' && depth <= 6) {
+    return worldOptions.terrainBlockStateIds.sandstone;
+  }
+
+  if (biomeProfile.biomeKey === 'ocean') {
+    if (depth <= 5) {
+      return worldOptions.terrainBlockStateIds.sandstone;
+    }
+  }
+
   const oreNoise = hashNoise2d(
     (worldX * 0.91) + (worldY * 1.73),
     (worldZ * 0.87) - (worldY * 1.21),
