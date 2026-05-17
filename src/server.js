@@ -340,12 +340,42 @@ function createMinecraftServer(overrides = {}) {
       return;
     }
 
+    const deltaX = chunkX - centerChunk.chunkX;
+    const deltaZ = chunkZ - centerChunk.chunkZ;
+    const distanceSquared = (deltaX * deltaX) + (deltaZ * deltaZ);
+
     client.pendingChunkKeys.add(chunkKey);
     client.pendingChunkQueue.push({
       chunkX,
       chunkZ,
-      distance: Math.abs(chunkX - centerChunk.chunkX) + Math.abs(chunkZ - centerChunk.chunkZ)
+      deltaX,
+      deltaZ,
+      distance: Math.abs(deltaX) + Math.abs(deltaZ),
+      distanceSquared
     });
+  }
+
+  function compareChunkQueueEntries(left, right) {
+    if (left.distanceSquared !== right.distanceSquared) {
+      return left.distanceSquared - right.distanceSquared;
+    }
+
+    if (left.distance !== right.distance) {
+      return left.distance - right.distance;
+    }
+
+    const leftAxisBias = Math.abs(left.deltaX) === Math.abs(left.deltaZ) ? 1 : 0;
+    const rightAxisBias = Math.abs(right.deltaX) === Math.abs(right.deltaZ) ? 1 : 0;
+
+    if (leftAxisBias !== rightAxisBias) {
+      return leftAxisBias - rightAxisBias;
+    }
+
+    if (left.deltaZ !== right.deltaZ) {
+      return left.deltaZ - right.deltaZ;
+    }
+
+    return left.deltaX - right.deltaX;
   }
 
   function processChunkQueue(client) {
@@ -353,7 +383,7 @@ function createMinecraftServer(overrides = {}) {
       return;
     }
 
-    client.pendingChunkQueue.sort((left, right) => left.distance - right.distance);
+    client.pendingChunkQueue.sort(compareChunkQueueEntries);
     let sent = 0;
 
     while (client.pendingChunkQueue.length > 0 && sent < CHUNK_SEND_BATCH_SIZE) {

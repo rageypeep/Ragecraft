@@ -67,7 +67,18 @@ function getTreeCandidate(context) {
 }
 
 function getDecorationFeature(context) {
-  const { worldOptions, topStateId, topY, column, hashNoise2d, worldX, worldZ } = context;
+  const {
+    worldOptions,
+    topStateId,
+    topY,
+    column,
+    hashNoise2d,
+    worldX,
+    worldZ,
+    surfaceY,
+    spawn,
+    getColumnDescriptor
+  } = context;
   const densityNoise = hashNoise2d(worldX, worldZ, worldOptions.seedHash + 6301);
   const variantNoise = hashNoise2d(worldX, worldZ, worldOptions.seedHash + 6327);
 
@@ -95,13 +106,23 @@ function getDecorationFeature(context) {
     return null;
   }
 
-  if (densityNoise > 0.92) {
+  const adjacentToWater = [
+    [1, 0],
+    [-1, 0],
+    [0, 1],
+    [0, -1]
+  ].some(([dx, dz]) => {
+    const neighbourColumn = getColumnDescriptor(worldOptions, surfaceY, spawn, worldX + dx, worldZ + dz);
+    return neighbourColumn.waterTopY !== null;
+  });
+
+  if (adjacentToWater && densityNoise > 0.987) {
     return {
       lowerStateId: worldOptions.decorationBlockStateIds.sugarCane
     };
   }
 
-  if (densityNoise > 0.82) {
+  if (densityNoise > 0.72) {
     return {
       lowerStateId: variantNoise > 0.55
         ? worldOptions.decorationBlockStateIds.shortGrass

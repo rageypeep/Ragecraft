@@ -30,7 +30,7 @@
 - [x] Add larger tree variety and better density rules per biome.
 - [x] Add basic cliff, ridge, and shoreline shaping so biome borders feel less abrupt.
 - [x] Add chunk-population passes for features that must cross chunk borders cleanly.
-- Add bedrock/foundation rules and proper world bottom shaping.
+- [x] Add bedrock/foundation rules and proper world bottom shaping.
 - Add a real server-side lighting model instead of the current pragmatic flat-sky path.
 - Add simple mob-safe spawn area rules so new players do not appear inside dense terrain or trees.
 - Add configurable world height/depth ranges instead of one fixed terrain band.

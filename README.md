@@ -14,7 +14,8 @@ Ragecraft can currently:
 - accept offline-mode joins
 - support Minecraft Java `26.1.2` through a compatibility shim
 - complete login, configuration, registry loading, and play-state entry
-- generate a seeded floating world with mixed biome regions
+- generate a seeded mixed-biome world with full-depth terrain
+- generate full-depth chunks down to Minecraft's normal bottom with a bedrock floor
 - stream chunks around the player as they move
 - send chunk and lighting bootstrap data
 - support basic movement
@@ -27,6 +28,7 @@ The generated world currently includes:
 
 - seeded terrain
 - caves
+- a full underground layer down to bedrock instead of a shallow floating slab
 - ore pockets and underground stone variants
 - ponds and simple shoreline shaping
 - biome-specific surface palettes
@@ -39,7 +41,7 @@ The generated world currently includes:
 - a dedicated `birch_forest` biome pass with dense birch growth and classic birch-forest decoration
 - a dedicated `old_growth_birch_forest` biome pass with many taller birches, including trunks up to 14 blocks high
 - a dedicated `taiga` biome pass with conifer-heavy tree generation, ferns, large ferns, and sweet berry bushes
-- a dedicated `river` biome pass that carves water channels with mixed riverbeds, seagrass, and sparse bank vegetation
+- an experimental `river` biome module, currently parked until river terrain is rebuilt properly
 - ridge / cliff variation so terrain no longer looks like simple wave math
 
 The `26.1.2` support is not native Prismarine support. Ragecraft uses `1.21.11` packet data as a base and patches newer registry, tag, and packet behavior manually.
@@ -136,7 +138,7 @@ Chunk streaming note:
 
 World generation note:
 
-- By default, Ragecraft mixes plains, sunflower plains, flower forest, forest, birch forest, old growth birch forest, taiga, and river regions.
+- By default, Ragecraft currently mixes plains, sunflower plains, flower forest, forest, birch forest, old growth birch forest, and taiga regions.
 - Generation is deterministic. Changing `MC_WORLD_SEED` creates a different world while keeping chunk streaming and reloads consistent.
 - Trees, caves, ponds, surface decoration, and underground variants are generated from the same seed.
 - Biome work is now being split into dedicated files under `src/biomes/`, with `src/biomes/plains.js`, `src/biomes/sunflower-plains.js`, `src/biomes/forest.js`, `src/biomes/flower-forest.js`, `src/biomes/birch-forest.js`, `src/biomes/old-growth-birch-forest.js`, `src/biomes/taiga.js`, and `src/biomes/river.js` in place so far.
@@ -240,7 +242,6 @@ Current high-value next steps:
 
 - larger tree variety and better density rules per biome
 - chunk-population passes for features that must cross chunk borders cleanly
-- bedrock / foundation rules and proper world bottom shaping
 - real server-side lighting instead of the current pragmatic flat-sky approach
 - player persistence
 - commands
