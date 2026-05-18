@@ -185,7 +185,16 @@ function resolveWorldOptions(mcData, config = {}) {
       oldGrowthBirchForest: resolveBiomeId(mcData, ['old_growth_birch_forest', 'birch_forest'], fallbackBiomeId),
       desert: resolveBiomeId(mcData, ['desert'], fallbackBiomeId),
       swamp: resolveBiomeId(mcData, ['swamp'], fallbackBiomeId),
-      snowyPlains: resolveBiomeId(mcData, ['snowy_plains', 'snowy_tundra', 'plains'], fallbackBiomeId)
+      snowyPlains: resolveBiomeId(mcData, ['snowy_plains', 'snowy_tundra', 'plains'], fallbackBiomeId),
+      meadow: resolveBiomeId(mcData, ['meadow', 'plains'], fallbackBiomeId),
+      stonyPeaks: resolveBiomeId(mcData, ['stony_peaks', 'stony_shore'], fallbackBiomeId),
+      jaggedPeaks: resolveBiomeId(mcData, ['jagged_peaks', 'snowy_plains', 'plains'], fallbackBiomeId),
+      savanna: resolveBiomeId(mcData, ['savanna', 'plains'], fallbackBiomeId),
+      darkForest: resolveBiomeId(mcData, ['dark_forest', 'forest'], fallbackBiomeId),
+      warmOcean: resolveBiomeId(mcData, ['warm_ocean', 'ocean'], fallbackBiomeId),
+      lukewarmOcean: resolveBiomeId(mcData, ['lukewarm_ocean', 'ocean'], fallbackBiomeId),
+      coldOcean: resolveBiomeId(mcData, ['cold_ocean', 'ocean'], fallbackBiomeId),
+      frozenOcean: resolveBiomeId(mcData, ['frozen_ocean', 'ocean'], fallbackBiomeId)
     },
     foundationBlockStateId: resolveConfiguredBlockStateId(
       mcData,
@@ -672,6 +681,42 @@ function getLegacyBiomeProfile(worldOptions, biomeKey) {
     return biomes.snowyPlains.createProfile(worldOptions);
   }
 
+  if (biomeKey === 'meadow') {
+    return biomes.meadow.createProfile(worldOptions);
+  }
+
+  if (biomeKey === 'stonyPeaks') {
+    return biomes.stonyPeaks.createProfile(worldOptions);
+  }
+
+  if (biomeKey === 'jaggedPeaks') {
+    return biomes.jaggedPeaks.createProfile(worldOptions);
+  }
+
+  if (biomeKey === 'savanna') {
+    return biomes.savanna.createProfile(worldOptions);
+  }
+
+  if (biomeKey === 'darkForest') {
+    return biomes.darkForest.createProfile(worldOptions);
+  }
+
+  if (biomeKey === 'warmOcean') {
+    return biomes.warmOcean.createProfile(worldOptions);
+  }
+
+  if (biomeKey === 'coldOcean') {
+    return biomes.coldOcean.createProfile(worldOptions);
+  }
+
+  if (biomeKey === 'frozenOcean') {
+    return biomes.frozenOcean.createProfile(worldOptions);
+  }
+
+  if (biomeKey === 'lukewarmOcean') {
+    return biomes.lukewarmOcean.createProfile(worldOptions);
+  }
+
   return biomes.plains.createProfile(worldOptions);
 }
 
@@ -732,7 +777,43 @@ function getForcedBiomeProfile(worldOptions) {
     return biomes.snowyPlains.createProfile(worldOptions);
   }
 
-  if (worldOptions.biomeName.includes('plains') || worldOptions.biomeName.includes('meadow')) {
+  if (worldOptions.biomeName.includes('savanna')) {
+    return biomes.savanna.createProfile(worldOptions);
+  }
+
+  if (worldOptions.biomeName.includes('dark_forest') || worldOptions.biomeName.includes('dark-forest')) {
+    return biomes.darkForest.createProfile(worldOptions);
+  }
+
+  if (worldOptions.biomeName.includes('meadow')) {
+    return biomes.meadow.createProfile(worldOptions);
+  }
+
+  if (worldOptions.biomeName.includes('stony_peaks') || worldOptions.biomeName.includes('stony-peaks')) {
+    return biomes.stonyPeaks.createProfile(worldOptions);
+  }
+
+  if (worldOptions.biomeName.includes('jagged_peaks') || worldOptions.biomeName.includes('jagged-peaks')) {
+    return biomes.jaggedPeaks.createProfile(worldOptions);
+  }
+
+  if (worldOptions.biomeName.includes('warm_ocean') || worldOptions.biomeName.includes('warm-ocean')) {
+    return biomes.warmOcean.createProfile(worldOptions);
+  }
+
+  if (worldOptions.biomeName.includes('cold_ocean') || worldOptions.biomeName.includes('cold-ocean')) {
+    return biomes.coldOcean.createProfile(worldOptions);
+  }
+
+  if (worldOptions.biomeName.includes('frozen_ocean') || worldOptions.biomeName.includes('frozen-ocean')) {
+    return biomes.frozenOcean.createProfile(worldOptions);
+  }
+
+  if (worldOptions.biomeName.includes('lukewarm_ocean') || worldOptions.biomeName.includes('lukewarm-ocean')) {
+    return biomes.lukewarmOcean.createProfile(worldOptions);
+  }
+
+  if (worldOptions.biomeName.includes('plains')) {
     return biomes.plains.createProfile(worldOptions);
   }
 
@@ -861,6 +942,16 @@ function getClimateBiomeWeights(climate) {
       getClimateBandWeight(climate.temperature, -0.72, 0.36) *
       getClimateBandWeight(climate.moisture, -0.08, 0.82) *
       (0.36 + (flatFactor * 0.28) + (coolWeirdness * 0.36))
+    ),
+    savanna: Math.max(0.001,
+      getClimateBandWeight(climate.temperature, 0.62, 0.44) *
+      getClimateBandWeight(climate.moisture, -0.42, 0.48) *
+      (0.36 + (flatFactor * 0.28) + (warmWeirdness * 0.36))
+    ),
+    darkForest: Math.max(0.001,
+      getClimateBandWeight(climate.temperature, 0.04, 0.52) *
+      getClimateBandWeight(climate.moisture, 0.48, 0.5) *
+      (0.34 + (ruggedFactor * 0.26) + (shelteredFactor * 0.32) + (coolWeirdness * 0.08))
     )
   };
 }
@@ -904,7 +995,9 @@ function getLandClimateSelection(worldOptions, worldX, worldZ) {
     },
     desert: biomes.desert.createProfile(worldOptions),
     swamp: biomes.swamp.createProfile(worldOptions),
-    snowyPlains: biomes.snowyPlains.createProfile(worldOptions)
+    snowyPlains: biomes.snowyPlains.createProfile(worldOptions),
+    savanna: biomes.savanna.createProfile(worldOptions),
+    darkForest: biomes.darkForest.createProfile(worldOptions)
   };
   const totalWeight = Object.values(weights).reduce((sum, weight) => sum + weight, 0);
   const blendedTerrainAmplitudeOffset = Object.entries(weights).reduce(
@@ -2103,15 +2196,46 @@ function getColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ) {
           : null
     )
     : null;
+  const mountainBiomeProfile = !oceanColumn.active &&
+    !lakeColumn.active &&
+    !riverColumn.active &&
+    !shoreBiomeProfile &&
+    baseTerrainMetrics.mountainness >= 0.38
+    ? (
+      baseTerrainMetrics.mountainness >= 0.72 && baseTerrainMetrics.ruggedness >= 0.52
+        ? biomes.jaggedPeaks.createProfile(worldOptions)
+        : baseTerrainMetrics.mountainness >= 0.52 && baseTerrainMetrics.ruggedness >= 0.38
+          ? biomes.stonyPeaks.createProfile(worldOptions)
+          : biomes.meadow.createProfile(worldOptions)
+    )
+    : null;
+  const oceanTemperatureNoise = oceanColumn.active
+    ? getTemperatureNoise(worldX, worldZ, worldOptions.seedHash + 7701)
+    : 0;
+  const oceanBiomeProfile = oceanColumn.active
+    ? (
+      oceanTemperatureNoise > 0.42
+        ? biomes.warmOcean.createProfile(worldOptions)
+        : oceanTemperatureNoise > 0.08
+          ? biomes.lukewarmOcean.createProfile(worldOptions)
+          : oceanTemperatureNoise > -0.32
+            ? biomes.ocean.createProfile(worldOptions)
+            : oceanTemperatureNoise > -0.58
+              ? biomes.coldOcean.createProfile(worldOptions)
+              : biomes.frozenOcean.createProfile(worldOptions)
+    )
+    : null;
   const biomeProfile = oceanColumn.active
-    ? biomes.ocean.createProfile(worldOptions)
+    ? oceanBiomeProfile
     : lakeColumn.active
       ? biomes.lake.createProfile(worldOptions)
     : riverColumn.active
       ? biomes.river.createProfile(worldOptions)
       : shoreBiomeProfile
         ? shoreBiomeProfile
-        : landBiomeProfile;
+        : mountainBiomeProfile
+          ? mountainBiomeProfile
+          : landBiomeProfile;
   const soilDepth = Math.max(3, Math.floor(worldOptions.terrainThickness / 3));
   const steepBankSurfaceStateId = shouldUseStonyBankSurface(localRelief, elevationAboveWater)
     ? getSteepBankSurfaceStateId(worldOptions, worldX, worldZ)
@@ -2161,6 +2285,7 @@ function getColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ) {
           );
 
   return cacheAndReturn({
+    baseTerrainMetrics,
     biomeProfile,
     climate: columnClimate,
     floorStartY: topY - (worldOptions.terrainThickness - 1),
@@ -2590,6 +2715,34 @@ function isBelowPondFootprint(worldX, worldY, worldZ, ponds = []) {
   return pondObjects.isBelowPondFootprint(worldX, worldY, worldZ, ponds);
 }
 
+function shouldPlaceWaterSpring(worldOptions, surfaceY, spawn, worldX, y, worldZ) {
+  const springNoise = hashNoise2d(worldX + (y * 7), worldZ + (y * 13), worldOptions.seedHash + 8801);
+  if (springNoise > 0.006) {
+    return false;
+  }
+  if (y < surfaceY + 8 || y > surfaceY + 80) {
+    return false;
+  }
+  const column = getColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ);
+  if (column.waterTopY !== null) {
+    return false;
+  }
+  const terrainMetrics = column.baseTerrainMetrics;
+  if (!terrainMetrics || terrainMetrics.cliffiness < 0.32 || terrainMetrics.mountainness < 0.28) {
+    return false;
+  }
+  const neighborTopYN = getColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ - 1).topY;
+  const neighborTopYS = getColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ + 1).topY;
+  const neighborTopYE = getColumnDescriptor(worldOptions, surfaceY, spawn, worldX + 1, worldZ).topY;
+  const neighborTopYW = getColumnDescriptor(worldOptions, surfaceY, spawn, worldX - 1, worldZ).topY;
+  const localDropN = column.topY - neighborTopYN;
+  const localDropS = column.topY - neighborTopYS;
+  const localDropE = column.topY - neighborTopYE;
+  const localDropW = column.topY - neighborTopYW;
+  const maxDrop = Math.max(localDropN, localDropS, localDropE, localDropW);
+  return maxDrop >= 3 && y >= column.topY - 4 && y <= column.topY - 1;
+}
+
 function createGeneratedChunk(worldOptions, surfaceY, spawn, chunkX, chunkZ) {
   const chunk = new Chunk();
   const populationFeatures = collectPopulationFeaturesForChunk(worldOptions, surfaceY, spawn, chunkX, chunkZ);
@@ -2625,6 +2778,12 @@ function createGeneratedChunk(worldOptions, surfaceY, spawn, chunkX, chunkZ) {
       }
 
       chunk.setBlockStateId(new Vec3(localX, topY, localZ), topBlockStateId);
+
+      for (let y = topY - 4; y <= topY - 1; y++) {
+        if (y >= chunk.minY && shouldPlaceWaterSpring(worldOptions, surfaceY, spawn, worldX, y, worldZ)) {
+          chunk.setBlockStateId(new Vec3(localX, y, localZ), worldOptions.terrainBlockStateIds.water);
+        }
+      }
 
       if (column.waterTopY !== null) {
         const isFreezing = biomeProfile.metadata && biomeProfile.metadata.temperature <= 0.15;
