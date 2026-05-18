@@ -351,12 +351,12 @@ function getRiverNetworkData(worldOptions, worldX, worldZ, terrainMetrics, clima
   const tributarySignal = getRiverSignedNoise(worldX, worldZ, worldOptions.seedHash) + tributaryBias;
   const trunkDistance = Math.abs(trunkSignal);
   const tributaryDistance = Math.abs(tributarySignal);
-  const trunkWidth = (forcedRiverWorld ? 0.17 : 0.1) +
-    (getRiverWidthNoise(worldX, worldZ, worldOptions.seedHash + 31) * 0.044) +
-    ((forcedRiverWorld ? 1 : terrainMetrics.inlandness) * 0.028);
-  const tributaryWidth = (forcedRiverWorld ? 0.14 : 0.078) +
-    (getRiverWidthNoise(worldX, worldZ, worldOptions.seedHash + 67) * 0.03) +
-    ((forcedRiverWorld ? 1 : terrainMetrics.inlandness) * 0.016);
+  const trunkWidth = (forcedRiverWorld ? 0.17 : 0.14) +
+    (getRiverWidthNoise(worldX, worldZ, worldOptions.seedHash + 31) * 0.05) +
+    ((forcedRiverWorld ? 1 : terrainMetrics.inlandness) * 0.038);
+  const tributaryWidth = (forcedRiverWorld ? 0.14 : 0.11) +
+    (getRiverWidthNoise(worldX, worldZ, worldOptions.seedHash + 67) * 0.038) +
+    ((forcedRiverWorld ? 1 : terrainMetrics.inlandness) * 0.024);
   const trunkEdgeNoise = signedValueNoise2d(worldX, worldZ, worldOptions.seedHash + 1711, 0.0095) * 0.018;
   const tributaryEdgeNoise = signedValueNoise2d(worldX, worldZ, worldOptions.seedHash + 1717, 0.017) * 0.035;
   const valleyFactor = smoothstep(clamp((-climate.weirdness + 0.1) / 0.55, 0, 1));
@@ -364,10 +364,10 @@ function getRiverNetworkData(worldOptions, worldX, worldZ, terrainMetrics, clima
   const drainageFactor = forcedRiverWorld
     ? 1
     : clamp(
-      (terrainMetrics.inlandness * 0.5) +
-      (valleyFactor * 0.34) +
-      (wetFactor * 0.22) -
-      0.08,
+      0.55 +
+      (terrainMetrics.inlandness * 0.2) +
+      (valleyFactor * 0.15) +
+      (wetFactor * 0.1),
       0,
       1
     );
@@ -1811,20 +1811,18 @@ function getRiverColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ,
   const riverWidth = riverNetwork.primaryWidth;
   const localRelief = getTerrainRelief(worldOptions, surfaceY, worldX, worldZ, 2);
   const elevationAboveWater = baseTopY - waterLevel;
-  const slopeSuppression = smoothstep(clamp((terrainMetrics.ruggedness - 0.42) / 0.22, 0, 1));
-  const elevatedSuppression = smoothstep(clamp((elevationAboveWater - 2) / 5, 0, 1));
-  const valleyReadiness = 1 - smoothstep(clamp((elevationAboveWater - 3) / 6, 0, 1));
-  const reliefSuppression = smoothstep(clamp((localRelief - 5) / 5, 0, 1));
-  const mountainSuppression = smoothstep(clamp((terrainMetrics.mountainness - 0.18) / 0.22, 0, 1));
-  const cliffSuppression = smoothstep(clamp((terrainMetrics.cliffiness - 0.14) / 0.16, 0, 1));
+  const slopeSuppression = smoothstep(clamp((terrainMetrics.ruggedness - 0.58) / 0.28, 0, 1));
+  const elevatedSuppression = smoothstep(clamp((elevationAboveWater - 12) / 14, 0, 1));
+  const reliefSuppression = smoothstep(clamp((localRelief - 10) / 10, 0, 1));
+  const mountainSuppression = smoothstep(clamp((terrainMetrics.mountainness - 0.52) / 0.24, 0, 1));
+  const cliffSuppression = smoothstep(clamp((terrainMetrics.cliffiness - 0.38) / 0.22, 0, 1));
   const riverBlend = riverNetwork.networkBlend *
     (1 - spawnBlend) *
-    (forcedRiverWorld ? 1 : valleyReadiness) *
-    (1 - (slopeSuppression * 0.7)) *
-    (1 - (elevatedSuppression * 0.8)) *
-    (1 - (reliefSuppression * 0.8)) *
-    (1 - (mountainSuppression * 0.9)) *
-    (1 - (cliffSuppression * 0.95));
+    (1 - (slopeSuppression * 0.5)) *
+    (1 - (elevatedSuppression * 0.6)) *
+    (1 - (reliefSuppression * 0.5)) *
+    (1 - (mountainSuppression * 0.85)) *
+    (1 - (cliffSuppression * 0.8));
   const bankSide = riverSignal === 0 ? 1 : Math.sign(riverSignal);
   const bendNoise = (
     signedValueNoise2d(worldX, worldZ, worldOptions.seedHash + 1771, 0.0072) +
@@ -1835,25 +1833,24 @@ function getRiverColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ,
   const trunkDepthFactor = smoothstep(clamp((riverNetwork.trunkBlend - 0.1) / 0.45, 0, 1));
   let bankBlend = forcedRiverWorld
     ? 1
-    : smoothstep(clamp((riverBlend - 0.08) / (0.22 + (innerBankFactor * 0.08) + (riverNetwork.confluenceBlend * 0.05)), 0, 1));
+    : smoothstep(clamp((riverBlend - 0.04) / (0.18 + (innerBankFactor * 0.08) + (riverNetwork.confluenceBlend * 0.05)), 0, 1));
   let waterBlend = forcedRiverWorld
     ? 1
     : smoothstep(clamp(
-      (riverBlend - 0.17) / (0.2 + (riverNetwork.confluenceBlend * 0.08) + (trunkDepthFactor * 0.06)),
+      (riverBlend - 0.10) / (0.16 + (riverNetwork.confluenceBlend * 0.08) + (trunkDepthFactor * 0.06)),
       0,
       1
     ));
 
-  bankBlend *= 1 - (elevatedSuppression * 0.25);
-  waterBlend *= 1 - (elevatedSuppression * 0.5);
+  bankBlend *= 1 - (elevatedSuppression * 0.15);
+  waterBlend *= 1 - (elevatedSuppression * 0.3);
 
   if (
     !forcedRiverWorld &&
     (
-      elevationAboveWater > 9 ||
-      localRelief > 8 ||
-      terrainMetrics.mountainness > 0.4 ||
-      terrainMetrics.cliffiness > 0.28
+      elevationAboveWater > 28 ||
+      terrainMetrics.mountainness > 0.68 ||
+      terrainMetrics.cliffiness > 0.52
     )
   ) {
     return {
@@ -1866,7 +1863,7 @@ function getRiverColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ,
     };
   }
 
-  if (riverBlend <= 0.08) {
+  if (riverBlend <= 0.03) {
     return {
       active: false,
       riverBlend,
@@ -1879,30 +1876,30 @@ function getRiverColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ,
 
   const depthNoise = valueNoise2d(worldX, worldZ, worldOptions.seedHash + 1667, 0.0115);
   const riverShelfNoise = signedValueNoise2d(worldX, worldZ, worldOptions.seedHash + 1741, 0.024);
-  const channelDepth = 1 +
-    Math.round(depthNoise * 2) +
-    Math.round((forcedRiverWorld ? 1 : terrainMetrics.inlandness) * 1) +
+  const channelDepth = 2 +
+    Math.round(depthNoise * 3) +
+    Math.round((forcedRiverWorld ? 1 : terrainMetrics.inlandness) * 2) +
     Math.round(outerBankFactor * 1) +
-    Math.round(trunkDepthFactor * 1) +
-    Math.round(riverNetwork.confluenceBlend * 1);
+    Math.round(trunkDepthFactor * 2) +
+    Math.round(riverNetwork.confluenceBlend * 2);
   const maxBankCutDepth = forcedRiverWorld
     ? Math.max(2, Math.min(7, elevationAboveWater))
     : Math.max(
-      1,
+      2,
       Math.min(
-        4,
-        Math.floor((elevationAboveWater * 0.45) + 1),
-        1 + Math.floor(localRelief / 3) + Math.round(trunkDepthFactor)
+        Math.max(6, elevationAboveWater),
+        Math.floor((elevationAboveWater * 0.85) + 2),
+        3 + Math.floor(localRelief / 2) + Math.round(trunkDepthFactor) * 2
       )
     );
   const maxChannelInset = forcedRiverWorld
     ? Math.max(2, Math.min(5, channelDepth))
     : Math.max(
-      1,
+      2,
       Math.min(
-        3,
+        Math.max(4, channelDepth),
         channelDepth,
-        1 + Math.round(riverNetwork.confluenceBlend) + Math.round(trunkDepthFactor)
+        2 + Math.round(riverNetwork.confluenceBlend) + Math.round(trunkDepthFactor) * 2
       )
     );
   const targetFloorY = waterLevel - channelDepth +
