@@ -13,7 +13,7 @@ const DEFAULTS = {
   world: {
     biome: 'taiga',
     mixedBiomes: true,
-    seed: 'testingseed4555687',
+    seed: '123456789abcdef',
     chunkRadius: 2,
     streamRadius: null,
     foundationBlock: 'stone',

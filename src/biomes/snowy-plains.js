@@ -1,3 +1,5 @@
+const biomeUtils = require('./utils');
+
 const SNOWY_PLAINS_METADATA = {
   key: 'snowy_plains',
   label: 'Snowy Plains',
@@ -53,7 +55,7 @@ function getTreeCandidate(context) {
   const surfaceVariation = getSurfaceVariation(worldOptions, surfaceY, spawn, worldX, worldZ, 1);
   const treeChance = 0.02 + (hashNoise2d(cellX, cellZ, worldOptions.seedHash + 837) * 0.03);
 
-  if (candidateNoise > treeChance || surfaceVariation > 4) {
+  if (candidateNoise > treeChance || surfaceVariation > 5) {
     return null;
   }
 
@@ -63,10 +65,10 @@ function getTreeCandidate(context) {
 function getDecorationFeature(context) {
   const { worldOptions, topStateId, hashNoise2d, worldX, worldZ } = context;
   const densityNoise = hashNoise2d(worldX, worldZ, worldOptions.seedHash + 8301);
-  const isSnowy = topStateId === worldOptions.terrainBlockStateIds.snow;
-  const isGrass = topStateId === worldOptions.surfaceBlockStateId;
+  const isSnowySurface = biomeUtils.isBiomeSurfaceState(worldOptions, topStateId, { allowSnow: true });
+  const isGrass = topStateId === worldOptions.soilBlockStateId;
 
-  if (!isSnowy && !isGrass) {
+  if (!isSnowySurface) {
     return null;
   }
 

@@ -1,3 +1,5 @@
+const biomeUtils = require('./utils');
+
 const OLD_GROWTH_BIRCH_FOREST_METADATA = {
   key: 'old_growth_birch_forest',
   label: 'Old Growth Birch Forest',
@@ -55,7 +57,7 @@ function getTreeCandidate(context) {
   const surfaceVariation = getSurfaceVariation(worldOptions, surfaceY, spawn, worldX, worldZ, 1);
   const treeChance = 0.52 + (densityNoise * 0.22);
 
-  if (candidateNoise > treeChance || surfaceVariation > 9) {
+  if (candidateNoise > treeChance || surfaceVariation > 10) {
     return null;
   }
 
@@ -72,9 +74,8 @@ function getDecorationFeature(context) {
   const { worldOptions, worldX, worldZ, topStateId, hashNoise2d } = context;
   const densityNoise = hashNoise2d(worldX, worldZ, worldOptions.seedHash + 1301);
   const variantNoise = hashNoise2d(worldX, worldZ, worldOptions.seedHash + 1327);
-  const isSandy = topStateId === worldOptions.terrainBlockStateIds.sand;
 
-  if (isSandy) {
+  if (!biomeUtils.isBiomeSurfaceState(worldOptions, topStateId)) {
     return null;
   }
 

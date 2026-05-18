@@ -1,3 +1,5 @@
+const biomeUtils = require('./utils');
+
 const TAIGA_METADATA = {
   key: 'taiga',
   label: 'Taiga',
@@ -54,7 +56,7 @@ function getTreeCandidate(context) {
   const surfaceVariation = getSurfaceVariation(worldOptions, surfaceY, spawn, worldX, worldZ, 1);
   const treeChance = 0.58 + (densityNoise * 0.22);
 
-  if (candidateNoise > treeChance || surfaceVariation > 9) {
+  if (candidateNoise > treeChance || surfaceVariation > 11) {
     return null;
   }
 
@@ -73,26 +75,25 @@ function getDecorationFeature(context) {
   const { worldOptions, worldX, worldZ, topStateId, hashNoise2d } = context;
   const densityNoise = hashNoise2d(worldX, worldZ, worldOptions.seedHash + 5301);
   const variantNoise = hashNoise2d(worldX, worldZ, worldOptions.seedHash + 5327);
-  const isSandy = topStateId === worldOptions.terrainBlockStateIds.sand;
 
-  if (isSandy) {
+  if (!biomeUtils.isBiomeSurfaceState(worldOptions, topStateId, { allowPodzol: true, allowRootedDirt: true })) {
     return null;
   }
 
-  if (densityNoise > 0.94) {
+  if (densityNoise > 0.93) {
     return {
       lowerStateId: worldOptions.decorationBlockStateIds.sweetBerryBush
     };
   }
 
-  if (densityNoise > 0.86) {
+  if (densityNoise > 0.84) {
     return {
       lowerStateId: worldOptions.decorationBlockStateIds.largeFernLower,
       upperStateId: worldOptions.decorationBlockStateIds.largeFernUpper
     };
   }
 
-  if (densityNoise > 0.72) {
+  if (densityNoise > 0.7) {
     return {
       lowerStateId: variantNoise > 0.35
         ? worldOptions.decorationBlockStateIds.fern
@@ -100,7 +101,7 @@ function getDecorationFeature(context) {
     };
   }
 
-  if (densityNoise > 0.68) {
+  if (densityNoise > 0.64) {
     return {
       lowerStateId: variantNoise > 0.5
         ? worldOptions.decorationBlockStateIds.dandelion

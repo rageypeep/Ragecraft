@@ -1,3 +1,5 @@
+const biomeUtils = require('./utils');
+
 const DARK_FOREST_METADATA = {
   key: 'dark_forest',
   label: 'Dark Forest',
@@ -52,31 +54,42 @@ function getTreeCandidate(context) {
   const { topY } = getColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ);
   const surfaceVariation = getSurfaceVariation(worldOptions, surfaceY, spawn, worldX, worldZ, 1);
 
-  if (candidateNoise > 0.55 || surfaceVariation > 3) {
+  if (candidateNoise > 0.48 || surfaceVariation > 6) {
     return null;
   }
 
-  if (selectorNoise > 0.6) {
+  if (selectorNoise > 0.82) {
     return buildTreeFeature('oak_tall', worldX, worldZ, topY);
   }
-  return buildTreeFeature('oak_bushy', worldX, worldZ, topY);
+
+  return buildTreeFeature(selectorNoise > 0.28 ? 'oak_bushy' : 'oak_small', worldX, worldZ, topY);
 }
 
 function getDecorationFeature(context) {
-  const { worldOptions, topStateId, hashNoise2d, worldX, worldZ } = context;
+  const { worldOptions, topStateId, hashNoise2d, valueNoise2d, worldX, worldZ } = context;
 
-  if (topStateId !== worldOptions.surfaceBlockStateId) {
+  if (!biomeUtils.isBiomeSurfaceState(worldOptions, topStateId)) {
     return null;
   }
 
   const densityNoise = hashNoise2d(worldX, worldZ, worldOptions.seedHash + 9501);
+  const variantNoise = hashNoise2d(worldX, worldZ, worldOptions.seedHash + 9527);
+  const patchNoise = valueNoise2d(worldX, worldZ, worldOptions.seedHash + 9563, 0.02);
 
-  if (densityNoise > 0.92) {
+  if (densityNoise > 0.9) {
     return { lowerStateId: worldOptions.decorationBlockStateIds.brownMushroom };
   }
 
-  if (densityNoise > 0.88) {
+  if (densityNoise > 0.86) {
     return { lowerStateId: worldOptions.decorationBlockStateIds.redMushroom };
+  }
+
+  if (patchNoise > 0.58 && densityNoise > 0.66) {
+    return {
+      lowerStateId: variantNoise > 0.42
+        ? worldOptions.decorationBlockStateIds.fern
+        : worldOptions.decorationBlockStateIds.shortGrass
+    };
   }
 
   return null;

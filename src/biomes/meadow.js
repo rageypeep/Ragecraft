@@ -1,3 +1,5 @@
+const biomeUtils = require('./utils');
+
 const MEADOW_METADATA = {
   key: 'meadow',
   label: 'Meadow',
@@ -51,7 +53,7 @@ function getTreeCandidate(context) {
   const { topY } = getColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ);
   const surfaceVariation = getSurfaceVariation(worldOptions, surfaceY, spawn, worldX, worldZ, 1);
 
-  if (candidateNoise > 0.04 || surfaceVariation > 3) {
+  if (candidateNoise > 0.025 || surfaceVariation > 5) {
     return null;
   }
 
@@ -59,22 +61,40 @@ function getTreeCandidate(context) {
 }
 
 function getDecorationFeature(context) {
-  const { worldOptions, topStateId, hashNoise2d, worldX, worldZ } = context;
+  const { worldOptions, topStateId, hashNoise2d, valueNoise2d, worldX, worldZ } = context;
 
-  if (topStateId !== worldOptions.surfaceBlockStateId) {
+  if (!biomeUtils.isBiomeSurfaceState(worldOptions, topStateId)) {
     return null;
   }
 
   const densityNoise = hashNoise2d(worldX, worldZ, worldOptions.seedHash + 9101);
   const variantNoise = hashNoise2d(worldX, worldZ, worldOptions.seedHash + 9127);
+  const flowerPatchNoise = valueNoise2d(worldX, worldZ, worldOptions.seedHash + 9161, 0.014);
 
-  if (densityNoise > 0.55) {
+  if (densityNoise > 0.9) {
+    return {
+      lowerStateId: worldOptions.decorationBlockStateIds.tallGrassLower,
+      upperStateId: worldOptions.decorationBlockStateIds.tallGrassUpper
+    };
+  }
+
+  if (flowerPatchNoise > 0.46 && densityNoise > 0.36) {
     if (variantNoise > 0.7) {
       return { lowerStateId: worldOptions.decorationBlockStateIds.oxeyeDaisy };
     }
-    if (variantNoise > 0.4) {
+    if (variantNoise > 0.52) {
       return { lowerStateId: worldOptions.decorationBlockStateIds.cornflower };
     }
+    if (variantNoise > 0.32) {
+      return { lowerStateId: worldOptions.decorationBlockStateIds.azureBluet };
+    }
+    if (variantNoise > 0.16) {
+      return { lowerStateId: worldOptions.decorationBlockStateIds.dandelion };
+    }
+    return { lowerStateId: worldOptions.decorationBlockStateIds.poppy };
+  }
+
+  if (densityNoise > 0.58) {
     return { lowerStateId: worldOptions.decorationBlockStateIds.shortGrass };
   }
 

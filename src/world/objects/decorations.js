@@ -27,6 +27,18 @@ function isGroundDecorationBase(worldOptions, stateId) {
   ].includes(stateId);
 }
 
+function shouldAllowBiomeSurfaceDecoration(worldOptions, biomeProfile, topStateId) {
+  if ([
+    'stony_shore',
+    'stony_peaks',
+    'jagged_peaks'
+  ].includes(biomeProfile?.biomeKey)) {
+    return true;
+  }
+
+  return topStateId !== worldOptions.terrainBlockStateIds.stone;
+}
+
 function getDecorationStateId(worldOptions, decorationStyle, worldX, worldZ, topY, topStateId, hashNoise2d, safeSurfaceY) {
   const densityNoise = hashNoise2d(worldX, worldZ, worldOptions.seedHash + 1301);
   const variantNoise = hashNoise2d(worldX, worldZ, worldOptions.seedHash + 1327);
@@ -309,39 +321,42 @@ function applySurfaceDecorationsToChunk({
         valueNoise2d,
         getColumnDescriptor
       });
-      const decorationFeature = climateDecorationFeature ?? freshwaterBankDecorationFeature ?? (
-        biomeProfile.biomeModule?.getDecorationFeature
-          ? biomeProfile.biomeModule.getDecorationFeature({
-            column,
-            surfaceY,
-            spawn,
-            worldOptions,
-            worldX,
-            worldZ,
-            topY,
-            topStateId,
-            hashNoise2d,
-            valueNoise2d,
-            getColumnDescriptor
-          })
-          : (() => {
-            const decorationStyle = biomeProfile.decorationStyle;
-            const decorationStateId = getDecorationStateId(
+      const biomeDecorationFeature = shouldAllowBiomeSurfaceDecoration(worldOptions, biomeProfile, topStateId)
+        ? (
+          biomeProfile.biomeModule?.getDecorationFeature
+            ? biomeProfile.biomeModule.getDecorationFeature({
+              column,
+              surfaceY,
+              spawn,
               worldOptions,
-              decorationStyle,
               worldX,
               worldZ,
               topY,
               topStateId,
               hashNoise2d,
-              safeSurfaceY
-            );
+              valueNoise2d,
+              getColumnDescriptor
+            })
+            : (() => {
+              const decorationStyle = biomeProfile.decorationStyle;
+              const decorationStateId = getDecorationStateId(
+                worldOptions,
+                decorationStyle,
+                worldX,
+                worldZ,
+                topY,
+                topStateId,
+                hashNoise2d,
+                safeSurfaceY
+              );
 
-            return decorationStateId
-              ? { lowerStateId: decorationStateId }
-              : null;
-          })()
-      );
+              return decorationStateId
+                ? { lowerStateId: decorationStateId }
+                : null;
+            })()
+        )
+        : null;
+      const decorationFeature = climateDecorationFeature ?? freshwaterBankDecorationFeature ?? biomeDecorationFeature;
 
       if (!decorationFeature) {
         continue;

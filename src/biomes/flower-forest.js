@@ -1,3 +1,4 @@
+const biomeUtils = require('./utils');
 const plains = require('./plains');
 
 const FLOWER_FOREST_METADATA = {
@@ -55,7 +56,7 @@ function getTreeCandidate(context) {
   const surfaceVariation = getSurfaceVariation(worldOptions, surfaceY, spawn, worldX, worldZ, 1);
   const treeChance = 0.32 + (densityNoise * 0.2);
 
-  if (candidateNoise > treeChance || surfaceVariation > 8) {
+  if (candidateNoise > treeChance || surfaceVariation > 9) {
     return null;
   }
 
@@ -83,9 +84,8 @@ function getTreeCandidate(context) {
 
 function getDecorationFeature(context) {
   const { worldOptions, worldX, worldZ, topStateId, hashNoise2d, valueNoise2d } = context;
-  const isSandy = topStateId === worldOptions.terrainBlockStateIds.sand;
 
-  if (isSandy) {
+  if (!biomeUtils.isBiomeSurfaceState(worldOptions, topStateId)) {
     return null;
   }
 

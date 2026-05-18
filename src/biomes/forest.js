@@ -1,3 +1,5 @@
+const biomeUtils = require('./utils');
+
 const FOREST_METADATA = {
   key: 'forest',
   label: 'Forest',
@@ -53,7 +55,7 @@ function getTreeCandidate(context) {
   const surfaceVariation = getSurfaceVariation(worldOptions, surfaceY, spawn, worldX, worldZ, 1);
   const treeChance = 0.58 + (densityNoise * 0.22);
 
-  if (candidateNoise > treeChance || surfaceVariation > 9) {
+  if (candidateNoise > treeChance || surfaceVariation > 10) {
     return null;
   }
 
@@ -73,9 +75,8 @@ function getDecorationFeature(context) {
   const densityNoise = hashNoise2d(worldX, worldZ, worldOptions.seedHash + 1301);
   const variantNoise = hashNoise2d(worldX, worldZ, worldOptions.seedHash + 1327);
   const mushroomNoise = hashNoise2d(worldX, worldZ, worldOptions.seedHash + 1361);
-  const isSandy = topStateId === worldOptions.terrainBlockStateIds.sand;
 
-  if (isSandy) {
+  if (!biomeUtils.isBiomeSurfaceState(worldOptions, topStateId)) {
     return null;
   }
 

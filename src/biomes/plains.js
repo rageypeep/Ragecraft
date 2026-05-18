@@ -1,3 +1,5 @@
+const biomeUtils = require('./utils');
+
 const PLAINS_METADATA = {
   key: 'plains',
   label: 'Plains',
@@ -54,7 +56,7 @@ function getTreeCandidate(context) {
     ? 0.09 + (densityNoise * 0.06)
     : 0.015 + (densityNoise * 0.025);
 
-  if (candidateNoise > treeChance || surfaceVariation > 5) {
+  if (candidateNoise > treeChance || surfaceVariation > 6) {
     return null;
   }
 
@@ -111,9 +113,8 @@ function getFlowerStateId(worldOptions, variantNoise) {
 
 function getDecorationFeature(context) {
   const { worldOptions, worldX, worldZ, topStateId, hashNoise2d, valueNoise2d } = context;
-  const isSandy = topStateId === worldOptions.terrainBlockStateIds.sand;
 
-  if (isSandy) {
+  if (!biomeUtils.isBiomeSurfaceState(worldOptions, topStateId)) {
     return null;
   }
 

@@ -2,6 +2,18 @@ const TREE_CELL_SIZE = 5;
 const TREE_CANOPY_RADIUS = 3;
 const TREE_SPAWN_CLEAR_RADIUS = 6;
 
+function isTreePlantableSurface(worldOptions, topBlockStateId) {
+  return [
+    worldOptions.surfaceBlockStateId,
+    worldOptions.soilBlockStateId,
+    worldOptions.terrainBlockStateIds.rootedDirt,
+    worldOptions.terrainBlockStateIds.podzol,
+    worldOptions.terrainBlockStateIds.mud,
+    worldOptions.terrainBlockStateIds.snow,
+    worldOptions.terrainBlockStateIds.snowBlock
+  ].includes(topBlockStateId);
+}
+
 function buildTreeFeature(worldOptions, treeType, worldX, worldZ, topY, seedA, seedB, hashNoise2d) {
   const heightNoise = hashNoise2d(seedA, seedB, worldOptions.seedHash + 29);
 
@@ -249,10 +261,20 @@ function getTreeCandidate({
     return null;
   }
 
-  const { biomeProfile, topY } = getColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ);
+  const baseColumn = getColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ);
+  const { biomeProfile, topY } = baseColumn;
 
   if (biomeProfile.biomeModule?.getTreeCandidate) {
-    return biomeProfile.biomeModule.getTreeCandidate(treeContext);
+    const tree = biomeProfile.biomeModule.getTreeCandidate(treeContext);
+
+    if (!tree) {
+      return null;
+    }
+
+    const treeColumn = getColumnDescriptor(worldOptions, surfaceY, spawn, tree.worldX, tree.worldZ);
+    return treeColumn.waterTopY === null && isTreePlantableSurface(worldOptions, treeColumn.topBlockStateId)
+      ? tree
+      : null;
   }
 
   const treeStyle = biomeProfile.treeStyle;
@@ -292,7 +314,9 @@ function getTreeCandidate({
     return null;
   }
 
-  return buildFeature(treeType, worldX, worldZ, topY);
+  return baseColumn.waterTopY === null && isTreePlantableSurface(worldOptions, baseColumn.topBlockStateId)
+    ? buildFeature(treeType, worldX, worldZ, topY)
+    : null;
 }
 
 function applyTreeToChunk({ chunk, chunkX, chunkZ, tree, setChunkBlock }) {

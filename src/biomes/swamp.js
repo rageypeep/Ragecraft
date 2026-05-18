@@ -1,3 +1,5 @@
+const biomeUtils = require('./utils');
+
 const SWAMP_METADATA = {
   key: 'swamp',
   label: 'Swamp',
@@ -51,9 +53,9 @@ function getTreeCandidate(context) {
 
   const { topY } = getColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ);
   const surfaceVariation = getSurfaceVariation(worldOptions, surfaceY, spawn, worldX, worldZ, 1);
-  const treeChance = 0.18 + (hashNoise2d(cellX, cellZ, worldOptions.seedHash + 737) * 0.12);
+  const treeChance = 0.22 + (hashNoise2d(cellX, cellZ, worldOptions.seedHash + 737) * 0.14);
 
-  if (candidateNoise > treeChance || surfaceVariation > 3) {
+  if (candidateNoise > treeChance || surfaceVariation > 5) {
     return null;
   }
 
@@ -67,7 +69,7 @@ function getDecorationFeature(context) {
   const variantNoise = hashNoise2d(worldX, worldZ, worldOptions.seedHash + 8227);
   const patchNoise = valueNoise2d(worldX, worldZ, worldOptions.seedHash + 8261, 0.02);
   const isMud = topStateId === worldOptions.terrainBlockStateIds.mud;
-  const isGrass = topStateId === worldOptions.surfaceBlockStateId;
+  const isGrass = biomeUtils.isBiomeSurfaceState(worldOptions, topStateId);
 
   if (!isMud && !isGrass) {
     return null;
@@ -79,9 +81,17 @@ function getDecorationFeature(context) {
     };
   }
 
+  if (densityNoise > 0.92) {
+    return {
+      lowerStateId: worldOptions.decorationBlockStateIds.redMushroom
+    };
+  }
+
   if (isMud && patchNoise > 0.62 && densityNoise > 0.72) {
     return {
-      lowerStateId: worldOptions.decorationBlockStateIds.fern
+      lowerStateId: variantNoise > 0.54
+        ? worldOptions.decorationBlockStateIds.fern
+        : worldOptions.decorationBlockStateIds.shortGrass
     };
   }
 
@@ -90,6 +100,12 @@ function getDecorationFeature(context) {
       lowerStateId: variantNoise > 0.5
         ? worldOptions.decorationBlockStateIds.shortGrass
         : worldOptions.decorationBlockStateIds.fern
+    };
+  }
+
+  if (isGrass && densityNoise > 0.68) {
+    return {
+      lowerStateId: worldOptions.decorationBlockStateIds.shortGrass
     };
   }
 
