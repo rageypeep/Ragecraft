@@ -2004,11 +2004,13 @@ function getColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ) {
     ? (
       useStonyShore
         ? getStonyShoreSurfaceStateId(worldOptions, worldX, worldZ)
-        : (
-          shouldUseStonyBankSurface(localRelief, preCoastElevationAboveWater)
-            ? getSteepBankSurfaceStateId(worldOptions, worldX, worldZ)
-            : worldOptions.terrainBlockStateIds.sand
-        )
+        : useBeach
+          ? worldOptions.terrainBlockStateIds.sand
+          : (
+            shouldUseStonyBankSurface(localRelief, coastShoreTopY - waterLevel)
+              ? getSteepBankSurfaceStateId(worldOptions, worldX, worldZ)
+              : worldOptions.terrainBlockStateIds.sand
+          )
     )
     : null;
   const topY = coastalLandColumn && coastShoreTopY !== null
