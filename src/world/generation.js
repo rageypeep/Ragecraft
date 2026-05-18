@@ -957,7 +957,7 @@ function shouldUseStonyShoreBiome(worldOptions, surfaceY, worldX, worldZ, topY, 
     return false;
   }
 
-  if (elevationAboveWater < 0 || elevationAboveWater > 10) {
+  if (elevationAboveWater < 0 || elevationAboveWater > 6) {
     return false;
   }
 
@@ -972,7 +972,7 @@ function shouldUseStonyShoreBiome(worldOptions, surfaceY, worldX, worldZ, topY, 
     (cliffFactor * 0.24) +
     (cliffNoise > 0.44 ? 0.1 : 0);
 
-  return stonyScore >= 0.6;
+  return stonyScore >= 0.72;
 }
 
 function getShoreMaterialStateId(worldOptions, worldX, worldZ, options = {}) {
@@ -1153,7 +1153,8 @@ function getOceanBlend(worldOptions, surfaceY, spawn, worldX, worldZ, terrainMet
     0,
     1
   ));
-  const inlandSuppression = smoothstep(clamp((terrainMetrics.inlandness - 0.08) / 0.16, 0, 1));
+  const inlandSuppression = smoothstep(clamp((terrainMetrics.inlandness - 0.04) / 0.2, 0, 1));
+  const elevationGate = smoothstep(clamp((terrainMetrics.topY - (surfaceY + 3)) / 6, 0, 1));
   let oceanBlend = forcedOcean
     ? 1
     : smoothstep(clamp(
@@ -1163,7 +1164,8 @@ function getOceanBlend(worldOptions, surfaceY, spawn, worldX, worldZ, terrainMet
       0,
       1
     ));
-  oceanBlend *= 1 - (inlandSuppression * 0.9);
+  oceanBlend *= 1 - (inlandSuppression * 0.98);
+  oceanBlend *= 1 - (elevationGate * 0.95);
   oceanBlend *= 1 - spawnBlend;
 
   return oceanBlend;
@@ -1198,6 +1200,10 @@ function getLakeBlend(worldOptions, surfaceY, spawn, worldX, worldZ, terrainMetr
       0,
       1
     ));
+  const lakeElevationGate = forcedLake
+    ? 0
+    : smoothstep(clamp((terrainMetrics.topY - (surfaceY + 3)) / 5, 0, 1));
+  lakeBlend *= 1 - (lakeElevationGate * 0.92);
   lakeBlend *= 1 - spawnBlend;
 
   return lakeBlend;
@@ -1526,7 +1532,7 @@ function getLakeColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ, 
   const lakeBlend = getLakeBlend(worldOptions, surfaceY, spawn, worldX, worldZ, terrainMetrics, climate, forcedLake);
   const elevationAboveWater = baseTopY - waterLevel;
   const localRelief = getTerrainRelief(worldOptions, surfaceY, worldX, worldZ, 2);
-  const elevationSuppression = smoothstep(clamp((elevationAboveWater - 4) / 6, 0, 1));
+  const elevationSuppression = smoothstep(clamp((elevationAboveWater - 2) / 4, 0, 1));
   const ruggedSuppression = smoothstep(clamp((terrainMetrics.ruggedness - 0.46) / 0.22, 0, 1));
   let shoreBlend = forcedLake
     ? 1
@@ -1538,11 +1544,11 @@ function getLakeColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ, 
     ? 1
     : smoothstep(clamp((lakeBlend - 0.54) / 0.12, 0, 1));
 
-  shoreBlend *= 1 - (elevationSuppression * 0.55);
+  shoreBlend *= 1 - (elevationSuppression * 0.75);
   shoreBlend *= 1 - (ruggedSuppression * 0.4);
-  shelfBlend *= 1 - (elevationSuppression * 0.68);
+  shelfBlend *= 1 - (elevationSuppression * 0.85);
   shelfBlend *= 1 - (ruggedSuppression * 0.5);
-  deepBlend *= 1 - (elevationSuppression * 0.8);
+  deepBlend *= 1 - (elevationSuppression * 0.95);
   deepBlend *= 1 - (ruggedSuppression * 0.62);
 
   if (!forcedLake && shoreBlend <= 0.04 && shelfBlend <= 0.04) {
@@ -1622,17 +1628,6 @@ function getRiverColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ,
   const waterLevel = surfaceY - 1;
   const spawnBlend = getSpawnMajorWaterBlend(spawn, worldX, worldZ);
 
-  if (worldOptions.mixedBiomes && !forcedRiverWorld) {
-    return {
-      active: false,
-      riverBlend: 0,
-      bankBlend: 0,
-      bankTopBlockStateId: null,
-      bankSoilBlockStateId: null,
-      bankTopY: null
-    };
-  }
-
   if ((oceanColumn.active || lakeColumn.active) && !forcedRiverWorld) {
     return {
       active: false,
@@ -1667,7 +1662,7 @@ function getRiverColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ,
     (1 - spawnBlend) *
     (forcedRiverWorld ? 1 : valleyReadiness) *
     (1 - (slopeSuppression * 0.7)) *
-    (1 - (elevatedSuppression * 0.55)) *
+    (1 - (elevatedSuppression * 0.8)) *
     (1 - (reliefSuppression * 0.8)) *
     (1 - (mountainSuppression * 0.9)) *
     (1 - (cliffSuppression * 0.95));
@@ -1984,11 +1979,11 @@ function getColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ) {
   const coastTargetTopY = coastalLandColumn
     ? (
       useStonyShore
-        ? waterLevel + 2 +
-          Math.round((1 - coastDistanceBlend) * 3) +
-          Math.round(baseTerrainMetrics.ruggedness * 2)
+        ? waterLevel + 1 +
+          Math.round((1 - coastDistanceBlend) * 2) +
+          Math.round(baseTerrainMetrics.ruggedness * 1)
         : waterLevel +
-          Math.round((1 - beachEdgeBlend) * 4)
+          Math.round((1 - beachEdgeBlend) * 2)
     )
     : null;
   const coastShoreTopY = coastalLandColumn
@@ -2004,7 +1999,7 @@ function getColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ) {
     localRelief <= 10 &&
     preCoastElevationAboveWater <= 12 &&
     coastShoreTopY !== null &&
-    (coastShoreTopY - waterLevel) <= 5;
+    (coastShoreTopY - waterLevel) <= 3;
   const coastShoreSurfaceStateId = coastalLandColumn
     ? (
       useStonyShore
