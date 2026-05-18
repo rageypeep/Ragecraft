@@ -516,7 +516,6 @@ async function testExperimental2612Compatibility() {
   }
 
   assert(sampledBiomeIds.size >= 3);
-  assert(!sampledBiomeIds.has(compatibilityBaseData.biomesByName.river.id));
   assert(treeLogCount > 0);
   assert.deepEqual(
     world.resolvePlacedBlockLocation(
@@ -741,14 +740,31 @@ async function testExperimental2612Compatibility() {
     ['ponds', 'trees', 'decorations']
   );
   const decoratedBiomeIds = new Set();
+  let decoratedRiverBiomeCount = 0;
+  let decoratedRiverWaterCount = 0;
 
   for (let x = -192; x <= 192; x += 8) {
     for (let z = -192; z <= 192; z += 8) {
-      decoratedBiomeIds.add(decoratedWorld.getBiomeId({ x, y: decoratedWorld.surfaceY, z }));
+      const biomeId = decoratedWorld.getBiomeId({ x, y: decoratedWorld.surfaceY, z });
+      decoratedBiomeIds.add(biomeId);
+
+      if (biomeId !== compatibilityBaseData.biomesByName.river.id) {
+        continue;
+      }
+
+      decoratedRiverBiomeCount += 1;
+
+      for (let y = decoratedWorld.surfaceY + 20; y >= decoratedWorld.surfaceY - 12; y--) {
+        if (decoratedWorld.getBlockState({ x, y, z }) === decoratedWorld.waterBlockStateId) {
+          decoratedRiverWaterCount += 1;
+          break;
+        }
+      }
     }
   }
 
-  assert(!decoratedBiomeIds.has(compatibilityBaseData.biomesByName.river.id));
+  assert(decoratedRiverBiomeCount > 0);
+  assert.equal(decoratedRiverWaterCount, decoratedRiverBiomeCount);
   const mountainWindowProfile = getTerrainWindowProfile(
     decoratedWorld,
     compatibilityBaseData,

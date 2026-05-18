@@ -1,6 +1,22 @@
 const { closeMinecraftServer, createMinecraftServer } = require('./server');
+const { createWorldMapServer } = require('./debug/world-map-server');
 
 const { config, server } = createMinecraftServer();
+const debugMapServer = createWorldMapServer({
+  config,
+  protocolDataVersion: server.protocolDataVersion,
+  world: server.world
+});
+
+if (debugMapServer) {
+  void debugMapServer.start()
+    .then(() => {
+      console.log(`[debug-map] listening on ${debugMapServer.url}`);
+    })
+    .catch((error) => {
+      console.error('[debug-map:error] failed to start', error);
+    });
+}
 
 server.on('listening', () => {
   const address = server.socketServer.address();
@@ -32,6 +48,11 @@ async function shutdown(signal) {
   console.log(`[server] ${signal} received, shutting down`);
 
   try {
+    if (debugMapServer) {
+      await debugMapServer.close().catch((error) => {
+        console.error('[debug-map:error] failed to close cleanly', error);
+      });
+    }
     await closeMinecraftServer(server);
     console.log('[server] closed cleanly');
     process.exit(0);

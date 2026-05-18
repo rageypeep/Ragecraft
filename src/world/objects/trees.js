@@ -157,6 +157,47 @@ function buildTreeFeature(worldOptions, treeType, worldX, worldZ, topY, seedA, s
     };
   }
 
+  if (treeType === 'jungle_tall') {
+    return {
+      canopyLayers: [
+        { yOffset: 0, radius: 2 },
+        { yOffset: 1, radius: 3 },
+        { yOffset: 2, radius: 3 },
+        { yOffset: 3, radius: 2 },
+        { yOffset: 4, radius: 1 }
+      ],
+      canopyBaseOffset: 3,
+      height: 9 + Math.floor(heightNoise * 4),
+      leafBlockStateId: worldOptions.treeBlockStateIds.jungleLeaves,
+      logBlockStateId: worldOptions.treeBlockStateIds.jungleLog,
+      topLeafOffset: 5,
+      type: treeType,
+      worldX,
+      worldZ,
+      topY
+    };
+  }
+
+  if (treeType === 'jungle_bushy') {
+    return {
+      canopyLayers: [
+        { yOffset: 0, radius: 3 },
+        { yOffset: 1, radius: 3 },
+        { yOffset: 2, radius: 2 },
+        { yOffset: 3, radius: 1 }
+      ],
+      canopyBaseOffset: 2,
+      height: 7 + Math.floor(heightNoise * 3),
+      leafBlockStateId: worldOptions.treeBlockStateIds.jungleLeaves,
+      logBlockStateId: worldOptions.treeBlockStateIds.jungleLog,
+      topLeafOffset: 4,
+      type: treeType,
+      worldX,
+      worldZ,
+      topY
+    };
+  }
+
   if (treeType === 'oak_small') {
     return {
       canopyLayers: [

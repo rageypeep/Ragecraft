@@ -254,8 +254,8 @@ function createMinecraftServer(overrides = {}) {
       dx: 0,
       dy: 0,
       dz: 0,
-      yaw: config.spawn.yaw,
-      pitch: config.spawn.pitch,
+      yaw: Number.isFinite(position.yaw) ? position.yaw : config.spawn.yaw,
+      pitch: Number.isFinite(position.pitch) ? position.pitch : config.spawn.pitch,
       flags: 0x00
     };
   }
@@ -272,6 +272,61 @@ function createMinecraftServer(overrides = {}) {
       },
       yaw: config.spawn.yaw,
       pitch: config.spawn.pitch
+    };
+  }
+
+  function createLiteralCommandNode(name, childIndexes = []) {
+    return {
+      flags: {
+        command_node_type: 1,
+        has_command: 0,
+        has_redirect_node: 0,
+        has_custom_suggestions: 0,
+        allows_restricted: 0
+      },
+      children: childIndexes,
+      extraNodeData: {
+        name
+      }
+    };
+  }
+
+  function createVec3ArgumentCommandNode(name) {
+    return {
+      flags: {
+        command_node_type: 2,
+        has_command: 1,
+        has_redirect_node: 0,
+        has_custom_suggestions: 0,
+        allows_restricted: 0
+      },
+      children: [],
+      extraNodeData: {
+        name,
+        parser: 'minecraft:vec3'
+      }
+    };
+  }
+
+  function createCommandDeclarationPacket() {
+    return {
+      nodes: [
+        {
+          flags: {
+            command_node_type: 0,
+            has_command: 0,
+            has_redirect_node: 0,
+            has_custom_suggestions: 0,
+            allows_restricted: 0
+          },
+          children: [1, 3]
+        },
+        createLiteralCommandNode('tp', [2]),
+        createVec3ArgumentCommandNode('location'),
+        createLiteralCommandNode('teleport', [4]),
+        createVec3ArgumentCommandNode('location')
+      ],
+      rootIndex: 0
     };
   }
 
@@ -316,6 +371,110 @@ function createMinecraftServer(overrides = {}) {
     writePlayPacket(client, 'held_item_slot', {
       slot: client.inventoryState.selectedSlot
     });
+  }
+
+  function parseTeleportCoordinate(token, baseValue) {
+    if (typeof token !== 'string' || !Number.isFinite(baseValue)) {
+      return null;
+    }
+
+    if (token === '~') {
+      return baseValue;
+    }
+
+    if (token.startsWith('~')) {
+      const offset = token.slice(1);
+
+      if (!offset) {
+        return baseValue;
+      }
+
+      const numericOffset = Number(offset);
+      return Number.isFinite(numericOffset) ? baseValue + numericOffset : null;
+    }
+
+    const absoluteValue = Number(token);
+    return Number.isFinite(absoluteValue) ? absoluteValue : null;
+  }
+
+  function teleportClient(client, targetPosition) {
+    if (!client || !targetPosition) {
+      return false;
+    }
+
+    const currentPosition = client.playerPosition ?? {
+      x: 0,
+      y: config.spawn.y,
+      z: 0,
+      yaw: config.spawn.yaw,
+      pitch: config.spawn.pitch
+    };
+    const resolvedPosition = {
+      x: targetPosition.x,
+      y: targetPosition.y,
+      z: targetPosition.z,
+      yaw: targetPosition.yaw ?? currentPosition.yaw ?? config.spawn.yaw,
+      pitch: targetPosition.pitch ?? currentPosition.pitch ?? config.spawn.pitch
+    };
+    const teleportId = allocateTeleportId(client);
+
+    cancelChunkGeneration(client);
+    itemDropManager.setClientPosition(client, resolvedPosition);
+
+    if (client.playerState) {
+      client.playerState.pendingTeleportId = teleportId;
+    }
+
+    syncClientChunks(client, true);
+    writePositionPacket(client, buildPositionPacket(resolvedPosition, teleportId));
+    itemDropManager.attemptPickup(client);
+    return true;
+  }
+
+  function tryHandlePlayerCommand(client, rawMessage) {
+    if (typeof rawMessage !== 'string' || !rawMessage.startsWith('/')) {
+      return false;
+    }
+
+    const tokens = rawMessage.slice(1).trim().split(/\s+/).filter(Boolean);
+
+    if (tokens.length === 0) {
+      return true;
+    }
+
+    const command = tokens.shift()?.toLowerCase();
+
+    if (command !== 'tp' && command !== 'teleport') {
+      sendMessage([client], `Unknown command: /${command}`, 'Server', 'system');
+      return true;
+    }
+
+    if (tokens[0] === '@s') {
+      tokens.shift();
+    }
+
+    if (tokens.length !== 3) {
+      sendMessage([client], 'Usage: /tp [@s] <x> <y> <z> (supports ~ relative coordinates)', 'Server', 'system');
+      return true;
+    }
+
+    const currentPosition = client.playerPosition ?? {
+      x: 0,
+      y: config.spawn.y,
+      z: 0
+    };
+    const x = parseTeleportCoordinate(tokens[0], currentPosition.x ?? 0);
+    const y = parseTeleportCoordinate(tokens[1], currentPosition.y ?? config.spawn.y);
+    const z = parseTeleportCoordinate(tokens[2], currentPosition.z ?? 0);
+
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
+      sendMessage([client], 'Invalid teleport coordinates.', 'Server', 'system');
+      return true;
+    }
+
+    teleportClient(client, { x, y, z });
+    sendMessage([client], `Teleported to ${Math.floor(x)} ${Math.floor(y)} ${Math.floor(z)}.`, 'Server', 'system');
+    return true;
   }
 
   function getChunkPosition(position = {}) {
@@ -662,6 +821,7 @@ function createMinecraftServer(overrides = {}) {
     writePlayPacket(client, 'initialize_world_border', bootstrapPackets.border);
     writePlayPacket(client, 'update_view_distance', bootstrapPackets.viewDistance);
     writePlayPacket(client, 'simulation_distance', bootstrapPackets.simulationDistance);
+    writePlayPacket(client, 'declare_commands', createCommandDeclarationPacket());
     writePlayPacket(client, 'spawn_position', bootstrapPackets.spawnPosition);
     writePlayPacket(client, 'abilities', bootstrapPackets.abilities);
     writePlayPacket(client, 'game_state_change', bootstrapPackets.gameStateChange);
@@ -687,6 +847,10 @@ function createMinecraftServer(overrides = {}) {
       const message = extractChatMessage(packet).trim();
 
       if (!message) {
+        return;
+      }
+
+      if (tryHandlePlayerCommand(client, message)) {
         return;
       }
 
@@ -746,6 +910,12 @@ function createMinecraftServer(overrides = {}) {
 
     client.on('chat', handleChatPacket);
     client.on('chat_message', handleChatPacket);
+    client.on('chat_command', (packet) => {
+      tryHandlePlayerCommand(client, `/${packet.command ?? ''}`);
+    });
+    client.on('chat_command_signed', (packet) => {
+      tryHandlePlayerCommand(client, `/${packet.command ?? ''}`);
+    });
     client.on('block_dig', handleBlockDigPacket);
     client.on('block_place', handleBlockPlacePacket);
     client.on('position', (packet) => {

@@ -1,0 +1,552 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ragecraft World Debug Map</title>
+  <style>
+    :root {
+      --bg: #f4efe4;
+      --panel: rgba(255, 252, 244, 0.95);
+      --ink: #1f241f;
+      --muted: #5f6d63;
+      --line: #c8bea9;
+      --accent: #315f72;
+      --accent-2: #b56b2f;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(255,255,255,0.8), transparent 35%),
+        linear-gradient(135deg, #d7c8a7 0%, #efe7d3 48%, #d8e2d3 100%);
+      min-height: 100vh;
+    }
+    .shell {
+      display: grid;
+      grid-template-columns: 360px 1fr;
+      gap: 18px;
+      padding: 18px;
+      min-height: 100vh;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid rgba(49, 95, 114, 0.15);
+      box-shadow: 0 16px 48px rgba(28, 37, 33, 0.12);
+      backdrop-filter: blur(10px);
+    }
+    .sidebar {
+      padding: 18px;
+      border-radius: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .viewer {
+      border-radius: 24px;
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 1.8rem;
+      line-height: 1;
+      letter-spacing: 0.02em;
+    }
+    .subtle {
+      color: var(--muted);
+      font-size: 0.95rem;
+      line-height: 1.35;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    label {
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--muted);
+    }
+    input, select, button {
+      font: inherit;
+    }
+    input, select {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.88);
+      color: var(--ink);
+    }
+    button {
+      border: 0;
+      border-radius: 999px;
+      padding: 11px 16px;
+      background: var(--accent);
+      color: #fff;
+      cursor: pointer;
+    }
+    button.alt {
+      background: var(--accent-2);
+    }
+    .actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .statbox {
+      border: 1px solid rgba(200, 190, 169, 0.8);
+      border-radius: 14px;
+      padding: 12px;
+      background: rgba(255,255,255,0.7);
+      min-height: 96px;
+      white-space: pre-wrap;
+      font-family: Consolas, monospace;
+      font-size: 0.9rem;
+    }
+    .canvas-wrap {
+      position: relative;
+      overflow: hidden;
+      border-radius: 18px;
+      border: 1px solid rgba(49, 95, 114, 0.14);
+      background: rgba(255,255,255,0.75);
+      min-height: 640px;
+    }
+    canvas {
+      width: 100%;
+      height: min(76vh, 960px);
+      display: block;
+      image-rendering: pixelated;
+      cursor: crosshair;
+      background: linear-gradient(180deg, rgba(255,255,255,0.2), rgba(0,0,0,0.04));
+    }
+    .tooltip {
+      position: absolute;
+      left: 0;
+      top: 0;
+      transform: translate(12px, 12px);
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 120ms ease;
+      background: rgba(18, 24, 33, 0.94);
+      color: #f7fbff;
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 10px;
+      padding: 8px 10px;
+      white-space: nowrap;
+      font-size: 0.88rem;
+      line-height: 1.2;
+      box-shadow: 0 12px 24px rgba(0,0,0,0.2);
+    }
+    .tooltip.visible {
+      opacity: 1;
+    }
+    .viewer-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .legend {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+    .swatch {
+      width: 16px;
+      height: 16px;
+      border-radius: 4px;
+      border: 1px solid rgba(0,0,0,0.12);
+      display: inline-block;
+    }
+    @media (max-width: 1120px) {
+      .shell {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="panel sidebar">
+      <div>
+        <h1>World Debug Map</h1>
+        <div class="subtle">Biome finder, heat maps, river inspection, and click-to-TP coordinates using the current server seed.</div>
+      </div>
+
+      <div class="grid">
+        <div class="field">
+          <label for="centerX">Center X</label>
+          <input id="centerX" type="number" value="0">
+        </div>
+        <div class="field">
+          <label for="centerZ">Center Z</label>
+          <input id="centerZ" type="number" value="0">
+        </div>
+        <div class="field">
+          <label for="cellsX">Cells X</label>
+          <input id="cellsX" type="number" value="128" min="8" max="256">
+        </div>
+        <div class="field">
+          <label for="cellsZ">Cells Z</label>
+          <input id="cellsZ" type="number" value="128" min="8" max="256">
+        </div>
+        <div class="field">
+          <label for="step">Blocks / Cell</label>
+          <input id="step" type="number" value="16" min="1" max="128">
+        </div>
+        <div class="field">
+          <label for="layer">Layer</label>
+          <select id="layer">
+            <option value="biome">Biome</option>
+            <option value="height">Height</option>
+            <option value="water">Water Depth</option>
+            <option value="temperature">Temperature</option>
+            <option value="moisture">Moisture</option>
+            <option value="ruggedness">Ruggedness</option>
+            <option value="mountainness">Mountainness</option>
+            <option value="cliffiness">Cliffiness</option>
+            <option value="continentalness">Continentalness</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button id="renderButton">Render Map</button>
+        <button class="alt" id="spawnButton">Go To Spawn</button>
+      </div>
+
+      <div class="grid">
+        <div class="field">
+          <label for="biomeKey">Find Biome</label>
+          <select id="biomeKey"></select>
+        </div>
+        <div class="field">
+          <label for="findRadius">Search Radius</label>
+          <input id="findRadius" type="number" value="8192" min="64" max="32768">
+        </div>
+      </div>
+
+      <div class="actions">
+        <button id="findButton">Find Nearest</button>
+      </div>
+
+      <div class="field">
+        <label>Selected Cell</label>
+        <div id="selectedInfo" class="statbox">Click the map.</div>
+      </div>
+
+      <div class="field">
+        <label>Finder Result</label>
+        <div id="finderInfo" class="statbox">No search yet.</div>
+      </div>
+    </aside>
+
+    <main class="panel viewer">
+      <div class="viewer-head">
+        <div class="subtle" id="status">Loading biome registry…</div>
+        <div class="legend" id="legend"></div>
+      </div>
+      <div class="canvas-wrap">
+        <canvas id="mapCanvas" width="1024" height="1024"></canvas>
+        <div id="mapTooltip" class="tooltip"></div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const elements = {
+      biomeKey: document.getElementById('biomeKey'),
+      canvas: document.getElementById('mapCanvas'),
+      cellsX: document.getElementById('cellsX'),
+      cellsZ: document.getElementById('cellsZ'),
+      centerX: document.getElementById('centerX'),
+      centerZ: document.getElementById('centerZ'),
+      findButton: document.getElementById('findButton'),
+      findRadius: document.getElementById('findRadius'),
+      finderInfo: document.getElementById('finderInfo'),
+      layer: document.getElementById('layer'),
+      legend: document.getElementById('legend'),
+      mapTooltip: document.getElementById('mapTooltip'),
+      renderButton: document.getElementById('renderButton'),
+      selectedInfo: document.getElementById('selectedInfo'),
+      spawnButton: document.getElementById('spawnButton'),
+      status: document.getElementById('status'),
+      step: document.getElementById('step')
+    };
+
+    const ctx = elements.canvas.getContext('2d');
+    const state = {
+      biomeEntries: {},
+      currentGrid: null,
+      seaLevel: 63,
+      spawn: { x: 0, z: 0 }
+    };
+
+    function clamp(value, min, max) {
+      return Math.min(Math.max(value, min), max);
+    }
+
+    function lerp(a, b, t) {
+      return a + ((b - a) * t);
+    }
+
+    function hexToRgb(hex) {
+      const normalized = hex.replace('#', '');
+      return {
+        r: parseInt(normalized.slice(0, 2), 16),
+        g: parseInt(normalized.slice(2, 4), 16),
+        b: parseInt(normalized.slice(4, 6), 16)
+      };
+    }
+
+    function rgbToCss({ r, g, b }) {
+      return `rgb(${r}, ${g}, ${b})`;
+    }
+
+    function mixColor(hexA, hexB, amount) {
+      const a = hexToRgb(hexA);
+      const b = hexToRgb(hexB);
+      return rgbToCss({
+        r: Math.round(lerp(a.r, b.r, amount)),
+        g: Math.round(lerp(a.g, b.g, amount)),
+        b: Math.round(lerp(a.b, b.b, amount))
+      });
+    }
+
+    function scalarToColor(value, min, max, lowHex, highHex) {
+      const t = clamp((value - min) / Math.max(0.0001, max - min), 0, 1);
+      return mixColor(lowHex, highHex, t);
+    }
+
+    function formatTp(sample) {
+      const y = Math.max(sample.waterTopY ?? sample.topY, sample.topY) + 2;
+      return `/tp ${sample.worldX} ${y} ${sample.worldZ}`;
+    }
+
+    function getBiomeLabel(biomeKey) {
+      return state.biomeEntries[biomeKey]?.label ?? biomeKey;
+    }
+
+    function buildLegend(layer) {
+      if (layer === 'biome') {
+        elements.legend.innerHTML = '<span>Biome colors</span>';
+        return;
+      }
+
+      const ranges = {
+        cliffiness: ['#d8f0ec', '#19363a'],
+        continentalness: ['#2d6ea6', '#d7af60'],
+        height: ['#275d38', '#f7f0dc'],
+        moisture: ['#d6b15f', '#225a60'],
+        mountainness: ['#dce7d4', '#435147'],
+        ruggedness: ['#d9e7d8', '#3a4339'],
+        temperature: ['#79a8df', '#d56d2d'],
+        water: ['#d9ebff', '#1456a8']
+      };
+
+      const [low, high] = ranges[layer] ?? ['#d8d8d8', '#404040'];
+      elements.legend.innerHTML = `
+        <span class="swatch" style="background:${low}"></span>
+        <span>Low</span>
+        <span class="swatch" style="background:${high}"></span>
+        <span>High</span>
+      `;
+    }
+
+    function getCellColor(sample, layer) {
+      if (layer === 'biome') {
+        return state.biomeEntries[sample.biomeKey]?.color ?? '#888888';
+      }
+
+      if (layer === 'height') {
+        return scalarToColor(sample.topY, 40, 220, '#275d38', '#f7f0dc');
+      }
+
+      if (layer === 'water') {
+        const depth = sample.waterTopY === null ? 0 : Math.max(0, sample.waterTopY - sample.topY);
+        return scalarToColor(depth, 0, 12, '#d9ebff', '#1456a8');
+      }
+
+      if (layer === 'temperature') {
+        return scalarToColor(sample.effectiveTemperature, -1, 1.2, '#79a8df', '#d56d2d');
+      }
+
+      if (layer === 'moisture') {
+        return scalarToColor(sample.moisture, -1, 1, '#d6b15f', '#225a60');
+      }
+
+      if (layer === 'ruggedness') {
+        return scalarToColor(sample.ruggedness, 0, 1, '#d9e7d8', '#3a4339');
+      }
+
+      if (layer === 'mountainness') {
+        return scalarToColor(sample.mountainness, 0, 1, '#dce7d4', '#435147');
+      }
+
+      if (layer === 'cliffiness') {
+        return scalarToColor(sample.cliffiness, 0, 1, '#d8f0ec', '#19363a');
+      }
+
+      if (layer === 'continentalness') {
+        return scalarToColor(sample.continentalness, -1, 1, '#2d6ea6', '#d7af60');
+      }
+
+      return '#888888';
+    }
+
+    async function loadBiomeRegistry() {
+      const response = await fetch('/api/biomes');
+      const payload = await response.json();
+      state.biomeEntries = payload.biomes;
+      state.seaLevel = payload.seaLevel;
+      state.spawn = payload.spawn;
+      elements.centerX.value = payload.spawn.x;
+      elements.centerZ.value = payload.spawn.z;
+
+      const biomeOptions = Object.values(payload.biomes)
+        .sort((left, right) => left.label.localeCompare(right.label))
+        .map((biome) => `<option value="${biome.key}">${biome.label}</option>`)
+        .join('');
+
+      elements.biomeKey.innerHTML = biomeOptions;
+      elements.status.textContent = `Ready. Sea level ${state.seaLevel}, spawn ${payload.spawn.x}, ${payload.spawn.z}.`;
+    }
+
+    async function renderMap() {
+      elements.status.textContent = 'Sampling world…';
+      const params = new URLSearchParams({
+        centerX: elements.centerX.value,
+        centerZ: elements.centerZ.value,
+        cellsX: elements.cellsX.value,
+        cellsZ: elements.cellsZ.value,
+        step: elements.step.value
+      });
+      const response = await fetch(`/api/sample?${params.toString()}`);
+      const grid = await response.json();
+      state.currentGrid = grid;
+      buildLegend(elements.layer.value);
+
+      elements.canvas.width = grid.cellsX;
+      elements.canvas.height = grid.cellsZ;
+
+      for (let row = 0; row < grid.cellsZ; row++) {
+        for (let column = 0; column < grid.cellsX; column++) {
+          const sample = grid.samples[(row * grid.cellsX) + column];
+          ctx.fillStyle = getCellColor(sample, elements.layer.value);
+          ctx.fillRect(column, row, 1, 1);
+        }
+      }
+
+      elements.status.textContent = `Showing ${grid.cellsX} x ${grid.cellsZ} cells at ${grid.step} blocks/cell.`;
+    }
+
+    async function findNearestBiome() {
+      elements.finderInfo.textContent = 'Searching…';
+      const params = new URLSearchParams({
+        biomeKey: elements.biomeKey.value,
+        originX: elements.centerX.value,
+        originZ: elements.centerZ.value,
+        radius: elements.findRadius.value,
+        step: elements.step.value
+      });
+      const response = await fetch(`/api/find-biome?${params.toString()}`);
+      const payload = await response.json();
+
+      if (!response.ok) {
+        elements.finderInfo.textContent = payload.error ?? 'No biome found.';
+        return;
+      }
+
+      elements.centerX.value = payload.match.worldX;
+      elements.centerZ.value = payload.match.worldZ;
+      elements.finderInfo.textContent =
+        `${getBiomeLabel(payload.biomeKey)}\n` +
+        `x=${payload.match.worldX} z=${payload.match.worldZ}\n` +
+        `topY=${payload.match.topY} waterTopY=${payload.match.waterTopY}\n` +
+        `${payload.tpCommand}`;
+      await renderMap();
+    }
+
+    elements.renderButton.addEventListener('click', () => {
+      void renderMap();
+    });
+
+    elements.spawnButton.addEventListener('click', () => {
+      elements.centerX.value = state.spawn.x;
+      elements.centerZ.value = state.spawn.z;
+      void renderMap();
+    });
+
+    elements.findButton.addEventListener('click', () => {
+      void findNearestBiome();
+    });
+
+    elements.layer.addEventListener('change', () => {
+      if (state.currentGrid) {
+        void renderMap();
+      }
+    });
+
+    elements.canvas.addEventListener('click', (event) => {
+      if (!state.currentGrid) {
+        return;
+      }
+
+      const rect = elements.canvas.getBoundingClientRect();
+      const scaleX = elements.canvas.width / rect.width;
+      const scaleY = elements.canvas.height / rect.height;
+      const column = clamp(Math.floor((event.clientX - rect.left) * scaleX), 0, state.currentGrid.cellsX - 1);
+      const row = clamp(Math.floor((event.clientY - rect.top) * scaleY), 0, state.currentGrid.cellsZ - 1);
+      const sample = state.currentGrid.samples[(row * state.currentGrid.cellsX) + column];
+      elements.selectedInfo.textContent =
+        `${getBiomeLabel(sample.biomeKey)}\n` +
+        `x=${sample.worldX} z=${sample.worldZ}\n` +
+        `topY=${sample.topY} waterTopY=${sample.waterTopY}\n` +
+        `temp=${sample.effectiveTemperature.toFixed(3)} moisture=${sample.moisture.toFixed(3)}\n` +
+        `rugged=${sample.ruggedness.toFixed(3)} cliff=${sample.cliffiness.toFixed(3)} mountain=${sample.mountainness.toFixed(3)}\n` +
+        `${formatTp(sample)}`;
+    });
+
+    elements.canvas.addEventListener('mousemove', (event) => {
+      if (!state.currentGrid) {
+        return;
+      }
+
+      const rect = elements.canvas.getBoundingClientRect();
+      const scaleX = elements.canvas.width / rect.width;
+      const scaleY = elements.canvas.height / rect.height;
+      const column = clamp(Math.floor((event.clientX - rect.left) * scaleX), 0, state.currentGrid.cellsX - 1);
+      const row = clamp(Math.floor((event.clientY - rect.top) * scaleY), 0, state.currentGrid.cellsZ - 1);
+      const sample = state.currentGrid.samples[(row * state.currentGrid.cellsX) + column];
+      elements.mapTooltip.textContent = `${getBiomeLabel(sample.biomeKey)} | x=${sample.worldX} z=${sample.worldZ}`;
+      elements.mapTooltip.style.transform = `translate(${event.clientX - rect.left + 14}px, ${event.clientY - rect.top + 14}px)`;
+      elements.mapTooltip.classList.add('visible');
+    });
+
+    elements.canvas.addEventListener('mouseleave', () => {
+      elements.mapTooltip.classList.remove('visible');
+    });
+
+    void loadBiomeRegistry().then(renderMap).catch((error) => {
+      elements.status.textContent = `Failed to load debug map: ${error.message}`;
+      console.error(error);
+    });
+  </script>
+</body>
+</html>

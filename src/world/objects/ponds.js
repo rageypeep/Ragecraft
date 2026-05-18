@@ -31,6 +31,15 @@ function getPondCandidate({
   const centerColumn = getColumnDescriptor(worldOptions, surfaceY, spawn, centerX, centerZ);
   const waterLevel = surfaceY - 1;
 
+  if (
+    centerColumn.waterTopY !== null ||
+    ['river', 'lake', 'ocean', 'warm_ocean', 'lukewarm_ocean', 'cold_ocean', 'frozen_ocean'].includes(
+      centerColumn.biomeProfile?.biomeKey
+    )
+  ) {
+    return null;
+  }
+
   if (centerColumn.topY > waterLevel + 2) {
     return null;
   }
@@ -53,6 +62,9 @@ function getPondCandidate({
       }
 
       const sampleColumn = getColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ);
+      if (sampleColumn.waterTopY !== null) {
+        return null;
+      }
       minTopY = Math.min(minTopY, sampleColumn.topY);
       maxTopY = Math.max(maxTopY, sampleColumn.topY);
 
