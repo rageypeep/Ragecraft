@@ -147,6 +147,71 @@ function collectWorldSignature(world, positions) {
     .join('|');
 }
 
+const NON_TERRAIN_SURFACE_BLOCK_NAMES = new Set([
+  'air',
+  'water',
+  'spruce_leaves',
+  'oak_leaves',
+  'birch_leaves',
+  'short_grass',
+  'fern',
+  'large_fern',
+  'tall_grass',
+  'sunflower',
+  'snow',
+  'dandelion',
+  'poppy',
+  'azure_bluet',
+  'oxeye_daisy',
+  'cornflower',
+  'orange_tulip',
+  'pink_tulip',
+  'red_tulip',
+  'white_tulip'
+]);
+
+function getTopTerrainY(world, mcData, x, z) {
+  for (let y = world.maxBuildY; y >= world.minBuildY; y--) {
+    const stateId = world.getBlockState({ x, y, z });
+    const blockName = mcData.blocksByStateId[stateId]?.name;
+
+    if (blockName && !NON_TERRAIN_SURFACE_BLOCK_NAMES.has(blockName)) {
+      return y;
+    }
+  }
+
+  return null;
+}
+
+function getTerrainWindowProfile(world, mcData, centerX, centerZ, radius = 32, step = 16) {
+  let minTopY = Number.POSITIVE_INFINITY;
+  let maxTopY = Number.NEGATIVE_INFINITY;
+  let topYSum = 0;
+  let topYCount = 0;
+
+  for (let x = centerX - radius; x <= centerX + radius; x += step) {
+    for (let z = centerZ - radius; z <= centerZ + radius; z += step) {
+      const topY = getTopTerrainY(world, mcData, x, z);
+
+      if (topY === null) {
+        continue;
+      }
+
+      minTopY = Math.min(minTopY, topY);
+      maxTopY = Math.max(maxTopY, topY);
+      topYSum += topY;
+      topYCount += 1;
+    }
+  }
+
+  return {
+    averageTopY: topYCount > 0 ? (topYSum / topYCount) : null,
+    maxTopY,
+    minTopY,
+    relief: maxTopY - minTopY
+  };
+}
+
 function countUndergroundAir(world, bounds) {
   let airCount = 0;
 
@@ -417,7 +482,7 @@ async function testExperimental2612Compatibility() {
     y: worldSafeSpawn.y - 1,
     z: worldSafeSpawn.z
   };
-  assert.equal(world.surfaceY, 95);
+  assert.equal(world.surfaceY, 64);
   assert.equal(world.chunks.length, 25);
   assert.equal(world.getBlockState(worldSurfaceBlockLocation), compatibilityBaseData.blocksByName.grass_block.defaultState);
   assert.notEqual(
@@ -451,6 +516,7 @@ async function testExperimental2612Compatibility() {
   }
 
   assert(sampledBiomeIds.size >= 3);
+  assert(!sampledBiomeIds.has(compatibilityBaseData.biomesByName.river.id));
   assert(treeLogCount > 0);
   assert.deepEqual(
     world.resolvePlacedBlockLocation(
@@ -553,6 +619,27 @@ async function testExperimental2612Compatibility() {
   assert.equal(configuredSignature, repeatSeedSignature);
   assert.notEqual(configuredSignature, differentSeedSignature);
 
+  const seededSpawnWorldA = createInitialWorldPackets(compatibilityBaseData, {
+    spawn: { y: 96, yaw: 0, pitch: 0, useConfiguredPosition: false },
+    world: {
+      seed: 'spawn-seed-a'
+    }
+  });
+  const seededSpawnWorldB = createInitialWorldPackets(compatibilityBaseData, {
+    spawn: { y: 96, yaw: 0, pitch: 0, useConfiguredPosition: false },
+    world: {
+      seed: 'spawn-seed-b'
+    }
+  });
+  assert.notDeepEqual(
+    seededSpawnWorldA.spawnChunk,
+    seededSpawnWorldB.spawnChunk
+  );
+  assert.notDeepEqual(
+    seededSpawnWorldA.getSafeSpawnPosition(),
+    seededSpawnWorldB.getSafeSpawnPosition()
+  );
+
   const undergroundAirCount = countUndergroundAir(configuredWorld, {
     minX: -96,
     maxX: 96,
@@ -653,6 +740,24 @@ async function testExperimental2612Compatibility() {
     decoratedWorld.populationFeaturePasses,
     ['ponds', 'trees', 'decorations']
   );
+  const decoratedBiomeIds = new Set();
+
+  for (let x = -192; x <= 192; x += 8) {
+    for (let z = -192; z <= 192; z += 8) {
+      decoratedBiomeIds.add(decoratedWorld.getBiomeId({ x, y: decoratedWorld.surfaceY, z }));
+    }
+  }
+
+  assert(!decoratedBiomeIds.has(compatibilityBaseData.biomesByName.river.id));
+  const mountainWindowProfile = getTerrainWindowProfile(
+    decoratedWorld,
+    compatibilityBaseData,
+    -512,
+    128
+  );
+  assert(mountainWindowProfile.averageTopY >= 140);
+  assert(mountainWindowProfile.maxTopY >= 220);
+  assert(mountainWindowProfile.relief >= 80);
 
   const plainsWorld = createInitialWorldPackets(compatibilityBaseData, {
     spawn: { x: 0, y: 96, z: 0, yaw: 0, pitch: 0 },

@@ -611,7 +611,7 @@ function createMinecraftServer(overrides = {}) {
   }
 
   function respawnPlayer(client) {
-    const safeSpawn = world.getSafeSpawnPosition(config.spawn);
+    const safeSpawn = world.getSafeSpawnPosition();
     const teleportId = allocateTeleportId(client);
 
     cancelChunkGeneration(client);

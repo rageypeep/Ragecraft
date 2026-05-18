@@ -15,7 +15,7 @@ function buildWorldState(loginPacket, world) {
   return {
     ...loginPacket.worldState,
     isFlat: true,
-    seaLevel: world.surfaceY + 1
+    seaLevel: world.surfaceY - 1
   };
 }
 
@@ -47,7 +47,7 @@ function buildRespawnPacket(loginPacket, world, copyMetadata = 0) {
 }
 
 function buildPlayerBootstrapPackets(client, config, world, loginPacket) {
-  const safeSpawn = world.getSafeSpawnPosition(config.spawn);
+  const safeSpawn = world.getSafeSpawnPosition();
   const worldState = buildWorldState(loginPacket, world);
   const playerStatus = buildPlayerStatusPackets();
   const login = {

@@ -13,7 +13,7 @@ const DEFAULTS = {
   world: {
     biome: 'taiga',
     mixedBiomes: true,
-    seed: 'ragecraft',
+    seed: 'testingseed4555687',
     chunkRadius: 2,
     streamRadius: null,
     foundationBlock: 'stone',
@@ -66,6 +66,11 @@ function readBoolean(name, fallback) {
 }
 
 function loadConfig(overrides = {}) {
+  const hasExplicitSpawnX = process.env.MC_SPAWN_X !== undefined ||
+    Object.prototype.hasOwnProperty.call(overrides.spawn ?? {}, 'x');
+  const hasExplicitSpawnZ = process.env.MC_SPAWN_Z !== undefined ||
+    Object.prototype.hasOwnProperty.call(overrides.spawn ?? {}, 'z');
+  const useConfiguredSpawnPosition = hasExplicitSpawnX || hasExplicitSpawnZ;
   const mergedWorld = {
     biome: process.env.MC_WORLD_BIOME ?? DEFAULTS.world.biome,
     mixedBiomes: readBoolean('MC_WORLD_MIXED_BIOMES', DEFAULTS.world.mixedBiomes),
@@ -87,6 +92,7 @@ function loadConfig(overrides = {}) {
     z: readNumber('MC_SPAWN_Z', DEFAULTS.spawn.z),
     yaw: readNumber('MC_SPAWN_YAW', DEFAULTS.spawn.yaw),
     pitch: readNumber('MC_SPAWN_PITCH', DEFAULTS.spawn.pitch),
+    useConfiguredPosition: useConfiguredSpawnPosition,
     ...(overrides.spawn ?? {})
   };
 

@@ -31,6 +31,50 @@ function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
 
+function hashSeedValue(seedHash, salt) {
+  let value = (seedHash ^ salt) >>> 0;
+  value ^= value >>> 16;
+  value = Math.imul(value, 2246822519) >>> 0;
+  value ^= value >>> 13;
+  value = Math.imul(value, 3266489917) >>> 0;
+  value ^= value >>> 16;
+  return value >>> 0;
+}
+
+function resolveSpawnReference(config, worldOptions) {
+  const configuredSpawn = config.spawn ?? {};
+
+  if (configuredSpawn.useConfiguredPosition !== false) {
+    return {
+      ...configuredSpawn,
+      x: Math.floor(configuredSpawn.x ?? 0),
+      z: Math.floor(configuredSpawn.z ?? 0)
+    };
+  }
+
+  const chunkRadius = 96;
+  const minimumAxisDistance = 12;
+  let spawnChunkX = (hashSeedValue(worldOptions.seedHash, 0x9e3779b9) % ((chunkRadius * 2) + 1)) - chunkRadius;
+  let spawnChunkZ = (hashSeedValue(worldOptions.seedHash, 0x85ebca6b) % ((chunkRadius * 2) + 1)) - chunkRadius;
+
+  if (Math.abs(spawnChunkX) < minimumAxisDistance && Math.abs(spawnChunkZ) < minimumAxisDistance) {
+    if ((hashSeedValue(worldOptions.seedHash, 0xc2b2ae35) & 1) === 0) {
+      spawnChunkX += spawnChunkX < 0 ? -minimumAxisDistance : minimumAxisDistance;
+    } else {
+      spawnChunkZ += spawnChunkZ < 0 ? -minimumAxisDistance : minimumAxisDistance;
+    }
+  }
+
+  const localX = 4 + (hashSeedValue(worldOptions.seedHash, 0x27d4eb2f) % 8);
+  const localZ = 4 + (hashSeedValue(worldOptions.seedHash, 0x165667b1) % 8);
+
+  return {
+    ...configuredSpawn,
+    x: (spawnChunkX * 16) + localX,
+    z: (spawnChunkZ * 16) + localZ
+  };
+}
+
 function createChunkTemplate(chunk, surfaceY, worldOptions) {
   return chunkHelpers.createChunkTemplate(chunk, surfaceY, worldOptions);
 }
@@ -45,8 +89,9 @@ function createChunkPacket(x, z, template) {
 
 function createInitialWorldPackets(mcData, config, savedWorldState = { blocks: [] }) {
   const worldOptions = resolveWorldOptions(mcData, config);
-  const spawnChunk = getSpawnChunk(config.spawn);
-  const surfaceY = getSurfaceY(config.spawn.y);
+  const spawnReference = resolveSpawnReference(config, worldOptions);
+  const spawnChunk = getSpawnChunk(spawnReference);
+  const surfaceY = getSurfaceY(spawnReference.y);
   const minChunkX = spawnChunk.x - worldOptions.chunkRadius;
   const maxChunkX = spawnChunk.x + worldOptions.chunkRadius;
   const minChunkZ = spawnChunk.z - worldOptions.chunkRadius;
@@ -65,7 +110,7 @@ function createInitialWorldPackets(mcData, config, savedWorldState = { blocks: [
   const waterSourceStateId = worldOptions.terrainBlockStateIds.water;
   const maxWaterStateId = worldOptions.terrainBlockStateIds.waterMax;
   const lightTemplate = chunkHelpers.createChunkLightTemplate(
-    createGeneratedChunk(worldOptions, surfaceY, config.spawn, spawnChunk.x, spawnChunk.z)
+    createGeneratedChunk(worldOptions, surfaceY, spawnReference, spawnChunk.x, spawnChunk.z)
   );
   const chunks = new Map();
   const generatedChunks = new Map();
@@ -75,7 +120,7 @@ function createInitialWorldPackets(mcData, config, savedWorldState = { blocks: [
     const chunkKey = getChunkKey(chunkX, chunkZ);
 
     if (!chunks.has(chunkKey)) {
-      const chunk = createGeneratedChunk(worldOptions, surfaceY, config.spawn, chunkX, chunkZ);
+      const chunk = createGeneratedChunk(worldOptions, surfaceY, spawnReference, chunkX, chunkZ);
       chunks.set(chunkKey, {
         chunkX,
         chunkZ,
@@ -94,7 +139,7 @@ function createInitialWorldPackets(mcData, config, savedWorldState = { blocks: [
     if (!generatedChunks.has(chunkKey)) {
       generatedChunks.set(
         chunkKey,
-        createGeneratedChunk(worldOptions, surfaceY, config.spawn, chunkX, chunkZ)
+        createGeneratedChunk(worldOptions, surfaceY, spawnReference, chunkX, chunkZ)
       );
     }
 
@@ -221,9 +266,9 @@ function createInitialWorldPackets(mcData, config, savedWorldState = { blocks: [
     return null;
   }
 
-  function getSafeSpawnPosition(preferredSpawn = config.spawn) {
-    const preferredX = clamp(Math.floor(preferredSpawn?.x ?? config.spawn.x), minX, maxX);
-    const preferredZ = clamp(Math.floor(preferredSpawn?.z ?? config.spawn.z), minZ, maxZ);
+  function getSafeSpawnPosition(preferredSpawn = spawnReference) {
+    const preferredX = clamp(Math.floor(preferredSpawn?.x ?? spawnReference.x), minX, maxX);
+    const preferredZ = clamp(Math.floor(preferredSpawn?.z ?? spawnReference.z), minZ, maxZ);
     let bestCandidate = null;
     let bestScore = Number.POSITIVE_INFINITY;
 
@@ -462,6 +507,7 @@ function createInitialWorldPackets(mcData, config, savedWorldState = { blocks: [
       worldOptions.terrainBlockStateIds.sand
     ],
     spawnChunk,
+    spawnReference,
     seed: worldOptions.seed,
     streamRadius: worldOptions.streamRadius,
     terrainThickness: worldOptions.terrainThickness,

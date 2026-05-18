@@ -5,7 +5,8 @@ const treeObjects = require('./objects/trees');
 const pondObjects = require('./objects/ponds');
 const decorationObjects = require('./objects/decorations');
 
-const SAFE_SURFACE_Y = 95;
+const SEA_LEVEL_Y = 63;
+const SURFACE_REFERENCE_Y = SEA_LEVEL_Y + 1;
 const BEDROCK_MAX_THICKNESS = 5;
 const TREE_SPAWN_CLEAR_RADIUS = treeObjects.TREE_SPAWN_CLEAR_RADIUS;
 const CAVE_SPAWN_CLEAR_RADIUS = 18;
@@ -55,8 +56,7 @@ function getSurfaceY(spawnY) {
   const probeChunk = new Chunk();
   const minSurfaceY = probeChunk.minY + 1;
   const maxSurfaceY = probeChunk.minY + probeChunk.worldHeight - 1;
-  const requestedSurfaceY = Math.floor(spawnY) - 1;
-  return clamp(Math.min(requestedSurfaceY, SAFE_SURFACE_Y), minSurfaceY, maxSurfaceY);
+  return clamp(SURFACE_REFERENCE_Y, minSurfaceY, maxSurfaceY);
 }
 
 function resolveConfiguredBlockStateId(mcData, blockName, fallbackBlockName) {
@@ -394,6 +394,8 @@ function getTerrainMetrics(worldX, worldZ, surfaceY, amplitude, seedOffset = 0) 
     persistence: 0.48,
     lacunarity: 2.2
   });
+  const mountainWarpX = worldX + (signedValueNoise2d(worldX, worldZ, seedOffset + 557, 0.0042) * 56);
+  const mountainWarpZ = worldZ + (signedValueNoise2d(worldX, worldZ, seedOffset + 569, 0.0042) * 56);
   const ridges = ridgeNoise2d(worldX, worldZ, seedOffset + 607, {
     frequency: 0.013,
     octaves: 4,
@@ -412,14 +414,70 @@ function getTerrainMetrics(worldX, worldZ, surfaceY, amplitude, seedOffset = 0) 
     persistence: 0.5,
     lacunarity: 2
   });
+  const mountainShape = fbmNoise2d(mountainWarpX, mountainWarpZ, seedOffset + 887, {
+    frequency: 0.0044,
+    octaves: 4,
+    persistence: 0.55,
+    lacunarity: 2.12
+  });
+  const mountainRidges = ridgeNoise2d(mountainWarpX, mountainWarpZ, seedOffset + 941, {
+    frequency: 0.0095,
+    octaves: 4,
+    persistence: 0.58,
+    lacunarity: 2.06
+  });
+  const escarpmentSignal = signedValueNoise2d(
+    (mountainWarpX * 0.68) + (mountainWarpZ * 0.14),
+    (mountainWarpZ * 0.66) - (mountainWarpX * 0.11),
+    seedOffset + 983,
+    0.016
+  );
+  const alpineReliefNoise = fbmNoise2d(mountainWarpX, mountainWarpZ, seedOffset + 1027, {
+    frequency: 0.0115,
+    octaves: 3,
+    persistence: 0.54,
+    lacunarity: 2.08
+  });
+  const rarePeakNoise = ridgeNoise2d(mountainWarpX, mountainWarpZ, seedOffset + 1089, {
+    frequency: 0.0036,
+    octaves: 3,
+    persistence: 0.57,
+    lacunarity: 2.02
+  });
+  const ultraPeakNoise = valueNoise2d(mountainWarpX, mountainWarpZ, seedOffset + 1127, 0.0018);
   const continentalFactor = smoothstep(clamp((continentalness + 0.72) / 1.7, 0, 1));
   const inlandness = smoothstep(clamp((continentalness + 0.28) / 1.05, 0, 1));
   const ruggedness = 1 - smoothstep(clamp((erosion + 1) / 2, 0, 1));
+  const mountainMask = smoothstep(clamp((inlandness - 0.2) / 0.5, 0, 1)) *
+    smoothstep(clamp((ruggedness - 0.14) / 0.5, 0, 1));
+  const mountainRegion = smoothstep(clamp((mountainShape - 0.02) / 0.34, 0, 1)) * mountainMask;
+  const mountainCore = smoothstep(clamp((mountainShape + (mountainRidges * 0.18) - 0.12) / 0.26, 0, 1)) * mountainMask;
+  const highRangeMask = smoothstep(clamp((mountainRegion - 0.42) / 0.42, 0, 1));
   const continentalLift = lerp(-(amplitude * 0.5), amplitude * 5.1, continentalFactor);
   const macroRelief = macro * (amplitude * 1.2);
   const hillRelief = hills * (amplitude * (0.65 + (inlandness * 0.65)));
   const ridgeBoost = Math.max(0, ridges - (0.46 + (erosion * 0.08))) * (amplitude * (1.3 + (ruggedness * 1.2)));
   const cliffBoost = Math.max(0, cliffs - 0.68) * (amplitude * (0.95 + (ruggedness * 1.55)));
+  const mountainPlateauLift = mountainRegion *
+    (amplitude * (5.8 + (inlandness * 3.8) + (ruggedness * 3.2)));
+  const mountainShoulderLift = mountainCore *
+    (amplitude * (3.2 + (inlandness * 1.6) + (ruggedness * 1.8)));
+  const alpineRelief = Math.max(0, alpineReliefNoise + (mountainRidges * 0.45) - 0.12) *
+    (amplitude * (2.4 + (ruggedness * 2.8) + (mountainCore * 1.4))) *
+    mountainCore;
+  const peakBoost = Math.max(0, mountainRidges - (0.34 - (ruggedness * 0.06))) *
+    (amplitude * (4.1 + (ruggedness * 4.4) + (inlandness * 1.6))) *
+    mountainCore;
+  const rarePeakMask = Math.pow(smoothstep(clamp((rarePeakNoise - 0.58) / 0.22, 0, 1)), 1.5) * mountainCore;
+  const rarePeakBoost = rarePeakMask *
+    (amplitude * (8.5 + (ruggedness * 6.8) + (inlandness * 2.8) + (highRangeMask * 4.2)));
+  const ultraPeakMask = Math.pow(smoothstep(clamp((ultraPeakNoise - 0.84) / 0.12, 0, 1)), 2.4) * rarePeakMask;
+  const ultraPeakBoost = ultraPeakMask *
+    (amplitude * (14 + (ruggedness * 10) + (inlandness * 4)));
+  const escarpmentBand = Math.max(0, 1 - (Math.abs(escarpmentSignal) / 0.17));
+  const cliffFaceBoost = Math.pow(escarpmentBand, 2.35) *
+    (amplitude * (1.2 + (ruggedness * 2.8) + (mountainCore * 1.4))) *
+    mountainRegion;
   const valleyCut = Math.max(0, -valleyMask) * (amplitude * (0.55 + (inlandness * 0.85)));
   const terrainOffset =
     (amplitude * 1.15) +
@@ -428,11 +486,26 @@ function getTerrainMetrics(worldX, worldZ, surfaceY, amplitude, seedOffset = 0) 
     hillRelief +
     ridgeBoost +
     cliffBoost -
-    valleyCut;
+    valleyCut +
+    mountainPlateauLift +
+    mountainShoulderLift +
+    alpineRelief +
+    peakBoost +
+    rarePeakBoost +
+    ultraPeakBoost +
+    cliffFaceBoost;
   const terrainMetrics = {
+    cliffiness: clamp((cliffBoost + cliffFaceBoost + (peakBoost * 0.28) + (rarePeakBoost * 0.12)) / Math.max(1, amplitude * 12), 0, 1),
     continentalness,
     erosion,
     inlandness,
+    mountainness: clamp(
+      (mountainRegion * 0.52) +
+      (mountainCore * 0.34) +
+      ((mountainPlateauLift + mountainShoulderLift + peakBoost + rarePeakBoost) / Math.max(1, amplitude * 120)),
+      0,
+      1
+    ),
     ruggedness,
     topY: waterLevel + Math.round(terrainOffset)
   };
@@ -880,23 +953,26 @@ function shouldUseStonyShoreBiome(worldOptions, surfaceY, worldX, worldZ, topY, 
     return false;
   }
 
-  if (coastBlend < 0.06 || coastBlend > 0.6) {
+  if (coastBlend < 0.14 || coastBlend > 0.84) {
     return false;
   }
 
-  if (elevationAboveWater < 0 || elevationAboveWater > 14) {
+  if (elevationAboveWater < 0 || elevationAboveWater > 10) {
     return false;
   }
 
-  if (localRelief < 3) {
-    return false;
-  }
+  const nearOceanFactor = smoothstep(clamp((coastBlend - 0.18) / 0.34, 0, 1));
+  const slopeFactor = smoothstep(clamp((localRelief - 5) / 4, 0, 1));
+  const ruggedFactor = smoothstep(clamp((terrainMetrics.ruggedness - 0.56) / 0.18, 0, 1));
+  const cliffFactor = smoothstep(clamp((terrainMetrics.cliffiness - 0.22) / 0.14, 0, 1));
+  const stonyScore =
+    (nearOceanFactor * 0.12) +
+    (slopeFactor * 0.4) +
+    (ruggedFactor * 0.24) +
+    (cliffFactor * 0.24) +
+    (cliffNoise > 0.44 ? 0.1 : 0);
 
-  if (terrainMetrics.erosion > 0.05 && terrainMetrics.ruggedness < 0.52) {
-    return false;
-  }
-
-  return cliffNoise > 0.38;
+  return stonyScore >= 0.6;
 }
 
 function getShoreMaterialStateId(worldOptions, worldX, worldZ, options = {}) {
@@ -955,7 +1031,7 @@ function getSteepBankSurfaceStateId(worldOptions, worldX, worldZ) {
 }
 
 function shouldUseStonyBankSurface(localRelief, elevationAboveWater) {
-  return localRelief >= 4 || elevationAboveWater >= 4;
+  return localRelief >= 6 || elevationAboveWater >= 7;
 }
 
 function getLakeBedMaterialStateId(worldOptions, worldX, worldZ) {
@@ -1143,26 +1219,70 @@ function getCoastProximityBlend(worldOptions, surfaceY, spawn, worldX, worldZ) {
   const waterLevel = surfaceY - 1;
   const sampleOffsets = [
     [0, 0, 1],
-    [1, 0, 0.9],
-    [-1, 0, 0.9],
-    [0, 1, 0.9],
-    [0, -1, 0.9],
-    [1, 1, 0.82],
-    [1, -1, 0.82],
-    [-1, 1, 0.82],
-    [-1, -1, 0.82],
-    [2, 0, 0.72],
-    [-2, 0, 0.72],
-    [0, 2, 0.72],
-    [0, -2, 0.72],
-    [2, 1, 0.64],
-    [2, -1, 0.64],
-    [-2, 1, 0.64],
-    [-2, -1, 0.64],
-    [1, 2, 0.64],
-    [1, -2, 0.64],
-    [-1, 2, 0.64],
-    [-1, -2, 0.64]
+    [2, 0, 0.96],
+    [-2, 0, 0.96],
+    [0, 2, 0.96],
+    [0, -2, 0.96],
+    [2, 2, 0.92],
+    [2, -2, 0.92],
+    [-2, 2, 0.92],
+    [-2, -2, 0.92],
+    [4, 0, 0.88],
+    [-4, 0, 0.88],
+    [0, 4, 0.88],
+    [0, -4, 0.88],
+    [4, 2, 0.84],
+    [4, -2, 0.84],
+    [-4, 2, 0.84],
+    [-4, -2, 0.84],
+    [2, 4, 0.84],
+    [2, -4, 0.84],
+    [-2, 4, 0.84],
+    [-2, -4, 0.84],
+    [4, 4, 0.8],
+    [4, -4, 0.8],
+    [-4, 4, 0.8],
+    [-4, -4, 0.8],
+    [6, 0, 0.74],
+    [-6, 0, 0.74],
+    [0, 6, 0.74],
+    [0, -6, 0.74],
+    [6, 3, 0.68],
+    [6, -3, 0.68],
+    [-6, 3, 0.68],
+    [-6, -3, 0.68],
+    [3, 6, 0.68],
+    [3, -6, 0.68],
+    [-3, 6, 0.68],
+    [-3, -6, 0.68],
+    [8, 0, 0.62],
+    [-8, 0, 0.62],
+    [0, 8, 0.62],
+    [0, -8, 0.62],
+    [8, 4, 0.56],
+    [8, -4, 0.56],
+    [-8, 4, 0.56],
+    [-8, -4, 0.56],
+    [4, 8, 0.56],
+    [4, -8, 0.56],
+    [-4, 8, 0.56],
+    [-4, -8, 0.56],
+    [10, 0, 0.48],
+    [-10, 0, 0.48],
+    [0, 10, 0.48],
+    [0, -10, 0.48],
+    [10, 5, 0.42],
+    [10, -5, 0.42],
+    [-10, 5, 0.42],
+    [-10, -5, 0.42],
+    [5, 10, 0.42],
+    [5, -10, 0.42],
+    [-5, 10, 0.42],
+    [-5, -10, 0.42],
+    [12, 0, 0.34],
+    [-12, 0, 0.34],
+    [0, 12, 0.34],
+    [0, -12, 0.34]
   ];
   let strongestOceanBlend = 0;
 
@@ -1210,6 +1330,105 @@ function getCoastProximityBlend(worldOptions, surfaceY, spawn, worldX, worldZ) {
   return strongestOceanBlend;
 }
 
+function getNearshoreLandBlend(worldOptions, surfaceY, spawn, worldX, worldZ) {
+  const waterLevel = surfaceY - 1;
+  const sampleOffsets = [
+    [1, 0, 1],
+    [-1, 0, 1],
+    [0, 1, 1],
+    [0, -1, 1],
+    [2, 0, 0.96],
+    [-2, 0, 0.96],
+    [0, 2, 0.96],
+    [0, -2, 0.96],
+    [2, 2, 0.92],
+    [2, -2, 0.92],
+    [-2, 2, 0.92],
+    [-2, -2, 0.92],
+    [3, 0, 0.86],
+    [-3, 0, 0.86],
+    [0, 3, 0.86],
+    [0, -3, 0.86],
+    [4, 0, 0.8],
+    [-4, 0, 0.8],
+    [0, 4, 0.8],
+    [0, -4, 0.8],
+    [4, 2, 0.74],
+    [4, -2, 0.74],
+    [-4, 2, 0.74],
+    [-4, -2, 0.74],
+    [2, 4, 0.74],
+    [2, -4, 0.74],
+    [-2, 4, 0.74],
+    [-2, -4, 0.74],
+    [6, 0, 0.62],
+    [-6, 0, 0.62],
+    [0, 6, 0.62],
+    [0, -6, 0.62],
+    [6, 3, 0.54],
+    [6, -3, 0.54],
+    [-6, 3, 0.54],
+    [-6, -3, 0.54],
+    [3, 6, 0.54],
+    [3, -6, 0.54],
+    [-3, 6, 0.54],
+    [-3, -6, 0.54]
+  ];
+  let strongestLandBlend = 0;
+
+  for (const [offsetX, offsetZ, weight] of sampleOffsets) {
+    const sampleX = worldX + offsetX;
+    const sampleZ = worldZ + offsetZ;
+    const sampleLandOffset = getBlendedLandTerrainAmplitudeOffset(worldOptions, sampleX, sampleZ);
+    const sampleTerrainMetrics = getTerrainMetrics(
+      sampleX,
+      sampleZ,
+      surfaceY,
+      worldOptions.terrainAmplitude + sampleLandOffset,
+      worldOptions.seedHash
+    );
+    const sampleTopY = getSpawnSafeTopY(
+      worldOptions,
+      surfaceY,
+      spawn,
+      sampleX,
+      sampleZ,
+      sampleTerrainMetrics.topY
+    );
+    const sampleOceanBlend = getOceanBlend(
+      worldOptions,
+      surfaceY,
+      spawn,
+      sampleX,
+      sampleZ,
+      sampleTerrainMetrics
+    );
+    const sampleElevationAboveWater = sampleTopY - waterLevel;
+    const aboveWaterCandidate = sampleElevationAboveWater >= 0;
+    const nonOceanCandidate = sampleOceanBlend <= 0.14;
+
+    if (!aboveWaterCandidate || !nonOceanCandidate) {
+      continue;
+    }
+
+    const lowCoastFactor = 1 - smoothstep(clamp((sampleElevationAboveWater - 7) / 8, 0, 1));
+    const landCandidateStrength = clamp(
+      0.42 +
+      (Math.max(0, sampleTerrainMetrics.inlandness) * 0.8) +
+      (lowCoastFactor * 0.4),
+      0,
+      1
+    );
+
+    strongestLandBlend = Math.max(
+      strongestLandBlend,
+      weight * landCandidateStrength
+    );
+  }
+
+  return strongestLandBlend;
+}
+
 function getOceanColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ, baseTopY, terrainMetrics) {
   const forcedOcean = !worldOptions.mixedBiomes && worldOptions.biomeName.includes('ocean');
   const waterLevel = surfaceY - 1;
@@ -1229,15 +1448,50 @@ function getOceanColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ,
     persistence: 0.58,
     lacunarity: 2
   }));
-  const floorDepth = 2 + Math.round(
-    (oceanBlend * (worldOptions.terrainAmplitude + 6)) +
-    (depthNoise * 4) +
-    (basinNoise * 3)
+  const shallowOceanDepth = 3 +
+    Math.round(depthNoise * 3) +
+    Math.round(basinNoise * 2);
+  const deepOceanDepth = 12 +
+    Math.round(depthNoise * 8) +
+    Math.round(basinNoise * 10) +
+    Math.round(Math.max(0, oceanBlend - 0.56) * 16);
+  const deepOceanFactor = smoothstep(clamp((oceanBlend - 0.46) / 0.24, 0, 1));
+  const openWaterFloorDepth = Math.max(
+    shallowOceanDepth,
+    Math.round(lerp(shallowOceanDepth, deepOceanDepth, deepOceanFactor))
   );
+  const nearshoreLandBlend = worldOptions.mixedBiomes
+    ? getNearshoreLandBlend(worldOptions, surfaceY, spawn, worldX, worldZ)
+    : 0;
+  const nearshoreShelfBlend = smoothstep(clamp((nearshoreLandBlend - 0.08) / 0.56, 0, 1));
+  const shorelineCliffSuppression = smoothstep(clamp((terrainMetrics.cliffiness - 0.28) / 0.24, 0, 1));
+  const shorelineRuggedSuppression = smoothstep(clamp((terrainMetrics.ruggedness - 0.58) / 0.18, 0, 1));
+  const underwaterShelfBlend = clamp(
+    (nearshoreShelfBlend * (1 - (shorelineCliffSuppression * 0.32)) * (1 - (shorelineRuggedSuppression * 0.16))) +
+    (nearshoreLandBlend * 0.18),
+    0,
+    1
+  );
+  const shelfDepthNoise = valueNoise2d(worldX, worldZ, worldOptions.seedHash + 1519, 0.017);
+  const nearshoreShelfDepth = 1 +
+    Math.round(shelfDepthNoise * 1) +
+    Math.round(Math.max(0, terrainMetrics.ruggedness - 0.58) * 1);
+  const enforcedNearshoreDepth = nearshoreLandBlend > 0.72
+    ? 1
+    : nearshoreLandBlend > 0.48
+      ? Math.min(nearshoreShelfDepth, 2)
+      : nearshoreShelfDepth;
+  let floorDepth = Math.max(
+    1,
+    Math.round(lerp(openWaterFloorDepth, enforcedNearshoreDepth, underwaterShelfBlend))
+  );
+  if (nearshoreLandBlend > 0.42 && oceanBlend < 0.42) {
+    floorDepth = Math.min(floorDepth, 2);
+  }
   const floorY = Math.min(baseTopY, waterLevel - floorDepth);
   const shallowWaterDepth = waterLevel - floorY;
   const topBlockStateId = getShoreMaterialStateId(worldOptions, worldX, worldZ, {
-    allowDirt: shallowWaterDepth <= 3 || oceanBlend < 0.42,
+    allowDirt: shallowWaterDepth <= 3 || oceanBlend < 0.42 || nearshoreLandBlend > 0.34,
     clayThreshold: 0.88,
     dirtThreshold: 0.83,
     gravelThreshold: 0.56
@@ -1249,6 +1503,7 @@ function getOceanColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ,
   return {
     active: true,
     oceanBlend,
+    nearshoreLandBlend,
     floorY,
     soilBlockStateId,
     topBlockStateId,
@@ -1367,6 +1622,17 @@ function getRiverColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ,
   const waterLevel = surfaceY - 1;
   const spawnBlend = getSpawnMajorWaterBlend(spawn, worldX, worldZ);
 
+  if (worldOptions.mixedBiomes && !forcedRiverWorld) {
+    return {
+      active: false,
+      riverBlend: 0,
+      bankBlend: 0,
+      bankTopBlockStateId: null,
+      bankSoilBlockStateId: null,
+      bankTopY: null
+    };
+  }
+
   if ((oceanColumn.active || lakeColumn.active) && !forcedRiverWorld) {
     return {
       active: false,
@@ -1389,13 +1655,22 @@ function getRiverColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ,
   const riverSignal = riverNetwork.primarySignal;
   const riverDistance = riverNetwork.primaryDistance;
   const riverWidth = riverNetwork.primaryWidth;
+  const localRelief = getTerrainRelief(worldOptions, surfaceY, worldX, worldZ, 2);
+  const elevationAboveWater = baseTopY - waterLevel;
   const slopeSuppression = smoothstep(clamp((terrainMetrics.ruggedness - 0.42) / 0.22, 0, 1));
-  const elevatedSuppression = smoothstep(clamp(((baseTopY - waterLevel) - 2) / 5, 0, 1));
+  const elevatedSuppression = smoothstep(clamp((elevationAboveWater - 2) / 5, 0, 1));
+  const valleyReadiness = 1 - smoothstep(clamp((elevationAboveWater - 3) / 6, 0, 1));
+  const reliefSuppression = smoothstep(clamp((localRelief - 5) / 5, 0, 1));
+  const mountainSuppression = smoothstep(clamp((terrainMetrics.mountainness - 0.18) / 0.22, 0, 1));
+  const cliffSuppression = smoothstep(clamp((terrainMetrics.cliffiness - 0.14) / 0.16, 0, 1));
   const riverBlend = riverNetwork.networkBlend *
     (1 - spawnBlend) *
+    (forcedRiverWorld ? 1 : valleyReadiness) *
     (1 - (slopeSuppression * 0.7)) *
-    (1 - (elevatedSuppression * 0.55));
-  const localRelief = getTerrainRelief(worldOptions, surfaceY, worldX, worldZ, 2);
+    (1 - (elevatedSuppression * 0.55)) *
+    (1 - (reliefSuppression * 0.8)) *
+    (1 - (mountainSuppression * 0.9)) *
+    (1 - (cliffSuppression * 0.95));
   const bankSide = riverSignal === 0 ? 1 : Math.sign(riverSignal);
   const bendNoise = (
     signedValueNoise2d(worldX, worldZ, worldOptions.seedHash + 1771, 0.0072) +
@@ -1418,6 +1693,25 @@ function getRiverColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ,
   bankBlend *= 1 - (elevatedSuppression * 0.25);
   waterBlend *= 1 - (elevatedSuppression * 0.5);
 
+  if (
+    !forcedRiverWorld &&
+    (
+      elevationAboveWater > 9 ||
+      localRelief > 8 ||
+      terrainMetrics.mountainness > 0.4 ||
+      terrainMetrics.cliffiness > 0.28
+    )
+  ) {
+    return {
+      active: false,
+      riverBlend: 0,
+      bankBlend: 0,
+      bankTopBlockStateId: null,
+      bankSoilBlockStateId: null,
+      bankTopY: null
+    };
+  }
+
   if (riverBlend <= 0.08) {
     return {
       active: false,
@@ -1437,6 +1731,26 @@ function getRiverColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ,
     Math.round(outerBankFactor * 1) +
     Math.round(trunkDepthFactor * 1) +
     Math.round(riverNetwork.confluenceBlend * 1);
+  const maxBankCutDepth = forcedRiverWorld
+    ? Math.max(2, Math.min(7, elevationAboveWater))
+    : Math.max(
+      1,
+      Math.min(
+        4,
+        Math.floor((elevationAboveWater * 0.45) + 1),
+        1 + Math.floor(localRelief / 3) + Math.round(trunkDepthFactor)
+      )
+    );
+  const maxChannelInset = forcedRiverWorld
+    ? Math.max(2, Math.min(5, channelDepth))
+    : Math.max(
+      1,
+      Math.min(
+        3,
+        channelDepth,
+        1 + Math.round(riverNetwork.confluenceBlend) + Math.round(trunkDepthFactor)
+      )
+    );
   const targetFloorY = waterLevel - channelDepth +
     Math.round(riverShelfNoise * (0.4 + (innerBankFactor * 0.35))) -
     Math.round(outerBankFactor * (1 + trunkDepthFactor)) -
@@ -1447,8 +1761,16 @@ function getRiverColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ,
     Math.round(innerBankFactor * 1) -
     Math.round(outerBankFactor * 1) +
     Math.round(riverNetwork.confluenceBlend * 1);
-  const sculptedTopY = Math.min(baseTopY, Math.floor(lerp(baseTopY, targetBankY, bankBlend)));
-  const topY = Math.min(sculptedTopY, Math.floor(lerp(sculptedTopY, targetFloorY, waterBlend)));
+  const minimumBankY = Math.max(waterLevel + 1, baseTopY - maxBankCutDepth);
+  const sculptedTopY = Math.max(
+    minimumBankY,
+    Math.min(baseTopY, Math.floor(lerp(baseTopY, targetBankY, bankBlend)))
+  );
+  const minimumFloorY = Math.max(waterLevel - maxChannelInset, sculptedTopY - maxChannelInset);
+  const topY = Math.max(
+    minimumFloorY,
+    Math.min(sculptedTopY, Math.floor(lerp(sculptedTopY, targetFloorY, waterBlend)))
+  );
   const bankCutDepth = baseTopY - sculptedTopY;
   const riverBankSurfaceStates = getRiverBankSurfaceStateIds(
     worldOptions,
@@ -1617,13 +1939,15 @@ function getColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ) {
     : oceanColumn.oceanBlend ?? 0;
   const preCoastElevationAboveWater = preCoastTopY - waterLevel;
   const localRelief = getTerrainRelief(worldOptions, surfaceY, worldX, worldZ, 2);
+  const coastalShelfFactor = 1 - smoothstep(clamp((baseTerrainMetrics.inlandness - 0.28) / 0.26, 0, 1));
+  const coastalShelfBlend = smoothstep(clamp((coastBlend - 0.02) / 0.48, 0, 1)) * coastalShelfFactor;
   const coastalLandColumn = worldOptions.mixedBiomes &&
     !oceanColumn.active &&
     !lakeColumn.active &&
     !riverColumn.active &&
-    coastBlend > 0.14 &&
+    coastalShelfBlend > 0.03 &&
     preCoastElevationAboveWater >= 0 &&
-    preCoastElevationAboveWater <= 18;
+    preCoastElevationAboveWater <= 24;
   const useStonyShore = coastalLandColumn && (
     shouldUseStonyShoreBiome(
       worldOptions,
@@ -1634,21 +1958,53 @@ function getColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ) {
       coastBlend,
       riverColumn.riverBlend ?? 0,
       baseTerrainMetrics
-    ) ||
-    preCoastElevationAboveWater > 4 ||
-    localRelief >= 3
+    )
   );
+  const coastDistanceBlend = coastalLandColumn
+    ? coastalShelfBlend
+    : 0;
+  const coastElevationBlend = coastalLandColumn
+    ? smoothstep(clamp((preCoastElevationAboveWater - 1) / 12, 0, 1))
+    : 0;
   const coastShoreBlend = coastalLandColumn
-    ? smoothstep(clamp((coastBlend - 0.12) / 0.3, 0, 1))
+    ? Math.max(
+      coastDistanceBlend,
+      clamp((coastDistanceBlend * 0.9) + (coastElevationBlend * 0.55), 0, 1)
+    )
+    : 0;
+  const beachEdgeBlend = coastalLandColumn
+    ? smoothstep(clamp((coastDistanceBlend - 0.16) / 0.56, 0, 1))
+    : 0;
+  const beachCarveBlend = coastalLandColumn
+    ? Math.max(
+      coastShoreBlend,
+      smoothstep(clamp((coastDistanceBlend - 0.08) / 0.64, 0, 1)) * 0.96
+    )
     : 0;
   const coastTargetTopY = coastalLandColumn
-    ? waterLevel + 1 +
-      Math.round((1 - coastShoreBlend) * (useStonyShore ? 4 : 3)) +
-      Math.round(baseTerrainMetrics.ruggedness * (useStonyShore ? 2 : 1))
+    ? (
+      useStonyShore
+        ? waterLevel + 2 +
+          Math.round((1 - coastDistanceBlend) * 3) +
+          Math.round(baseTerrainMetrics.ruggedness * 2)
+        : waterLevel +
+          Math.round((1 - beachEdgeBlend) * 4)
+    )
     : null;
   const coastShoreTopY = coastalLandColumn
-    ? Math.min(preCoastTopY, Math.floor(lerp(preCoastTopY, coastTargetTopY, coastShoreBlend)))
+    ? Math.min(
+      preCoastTopY,
+      Math.floor(lerp(preCoastTopY, coastTargetTopY, useStonyShore ? coastShoreBlend : beachCarveBlend))
+    )
     : null;
+  const useBeach = coastalLandColumn &&
+    !useStonyShore &&
+    coastDistanceBlend > 0.02 &&
+    coastalShelfFactor > 0.005 &&
+    localRelief <= 10 &&
+    preCoastElevationAboveWater <= 12 &&
+    coastShoreTopY !== null &&
+    (coastShoreTopY - waterLevel) <= 5;
   const coastShoreSurfaceStateId = coastalLandColumn
     ? (
       useStonyShore
@@ -1664,11 +2020,24 @@ function getColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ) {
     ? coastShoreTopY
     : preCoastTopY;
   const elevationAboveWater = topY - waterLevel;
+  const mountainCliffSurfaceStateId = !oceanColumn.active &&
+    !lakeColumn.active &&
+    !riverColumn.active &&
+    !lakeShoreColumn &&
+    !riverBankColumn &&
+    !coastalLandColumn &&
+    elevationAboveWater >= 5 &&
+    localRelief >= 5 &&
+    baseTerrainMetrics.cliffiness >= 0.26
+    ? getSteepBankSurfaceStateId(worldOptions, worldX, worldZ)
+    : null;
   const shoreBiomeProfile = coastalLandColumn
     ? (
       useStonyShore
         ? biomes.stonyShore.createProfile(worldOptions)
-        : biomes.beach.createProfile(worldOptions)
+        : useBeach
+          ? biomes.beach.createProfile(worldOptions)
+          : null
     )
     : null;
   const biomeProfile = oceanColumn.active
@@ -1696,6 +2065,8 @@ function getColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ) {
         ? riverColumn.bankSoilBlockStateId
       : coastalLandColumn && coastShoreSurfaceStateId
         ? coastShoreSurfaceStateId
+      : mountainCliffSurfaceStateId
+        ? mountainCliffSurfaceStateId
       : biomeProfile.biomeKey === 'beach' && steepBankSurfaceStateId
         ? steepBankSurfaceStateId
       : biomeProfile.biomeKey === 'stony_shore'
@@ -1713,6 +2084,8 @@ function getColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ) {
           ? riverColumn.bankTopBlockStateId
         : coastalLandColumn && coastShoreSurfaceStateId
           ? coastShoreSurfaceStateId
+        : mountainCliffSurfaceStateId
+          ? mountainCliffSurfaceStateId
         : riverColumn.topBlockStateId
           ?? (
             biomeProfile.biomeKey === 'beach' && steepBankSurfaceStateId
@@ -1885,7 +2258,7 @@ function applySurfaceDecorationsToChunk(chunk, chunkX, chunkZ, worldOptions, sur
     hashNoise2d,
     valueNoise2d,
     decorationSpawnClearRadius: DECORATION_SPAWN_CLEAR_RADIUS,
-    safeSurfaceY: SAFE_SURFACE_Y
+    safeSurfaceY: SURFACE_REFERENCE_Y
   });
 }
 
