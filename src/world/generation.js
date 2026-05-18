@@ -182,7 +182,10 @@ function resolveWorldOptions(mcData, config = {}) {
       forest: resolveBiomeId(mcData, ['forest'], fallbackBiomeId),
       taiga: resolveBiomeId(mcData, ['taiga'], fallbackBiomeId),
       birchForest: resolveBiomeId(mcData, ['birch_forest'], fallbackBiomeId),
-      oldGrowthBirchForest: resolveBiomeId(mcData, ['old_growth_birch_forest', 'birch_forest'], fallbackBiomeId)
+      oldGrowthBirchForest: resolveBiomeId(mcData, ['old_growth_birch_forest', 'birch_forest'], fallbackBiomeId),
+      desert: resolveBiomeId(mcData, ['desert'], fallbackBiomeId),
+      swamp: resolveBiomeId(mcData, ['swamp'], fallbackBiomeId),
+      snowyPlains: resolveBiomeId(mcData, ['snowy_plains', 'snowy_tundra', 'plains'], fallbackBiomeId)
     },
     foundationBlockStateId: resolveConfiguredBlockStateId(
       mcData,
@@ -230,7 +233,11 @@ function resolveWorldOptions(mcData, config = {}) {
       brownMushroom: resolveConfiguredBlockStateId(mcData, 'brown_mushroom', 'air'),
       redMushroom: resolveConfiguredBlockStateId(mcData, 'red_mushroom', 'air'),
       sugarCane: resolveConfiguredBlockStateId(mcData, 'sugar_cane', 'air'),
-      sweetBerryBush: resolveConfiguredBlockStateId(mcData, 'sweet_berry_bush', 'air')
+      sweetBerryBush: resolveConfiguredBlockStateId(mcData, 'sweet_berry_bush', 'air'),
+      deadBush: resolveConfiguredBlockStateId(mcData, 'dead_bush', 'air'),
+      cactusLower: resolveConfiguredBlockStateId(mcData, 'cactus', 'air'),
+      cactusUpper: resolveConfiguredBlockStateId(mcData, 'cactus', 'air'),
+      lilyPad: resolveConfiguredBlockStateId(mcData, 'lily_pad', 'air')
     },
     terrainBlockStateIds: {
       andesite: resolveConfiguredBlockStateId(mcData, 'andesite', worldConfig.foundationBlock),
@@ -248,7 +255,24 @@ function resolveWorldOptions(mcData, config = {}) {
       sand: resolveConfiguredBlockStateId(mcData, 'sand', worldConfig.soilBlock),
       sandstone: resolveConfiguredBlockStateId(mcData, 'sandstone', worldConfig.foundationBlock),
       snow: resolveConfiguredBlockStateId(mcData, 'snow', 'air'),
+      snowBlock: resolveConfiguredBlockStateId(mcData, 'snow_block', worldConfig.surfaceBlock),
+      ice: resolveConfiguredBlockStateId(mcData, 'ice', 'water'),
       stone: resolveConfiguredBlockStateId(mcData, 'stone', worldConfig.foundationBlock),
+      deepslate: resolveConfiguredBlockStateId(mcData, 'deepslate', worldConfig.foundationBlock),
+      tuff: resolveConfiguredBlockStateId(mcData, 'tuff', worldConfig.foundationBlock),
+      goldOre: resolveConfiguredBlockStateId(mcData, 'gold_ore', worldConfig.foundationBlock),
+      deepslateGoldOre: resolveConfiguredBlockStateId(mcData, 'deepslate_gold_ore', worldConfig.foundationBlock),
+      diamondOre: resolveConfiguredBlockStateId(mcData, 'diamond_ore', worldConfig.foundationBlock),
+      deepslateDiamondOre: resolveConfiguredBlockStateId(mcData, 'deepslate_diamond_ore', worldConfig.foundationBlock),
+      lapisOre: resolveConfiguredBlockStateId(mcData, 'lapis_ore', worldConfig.foundationBlock),
+      deepslateLapisOre: resolveConfiguredBlockStateId(mcData, 'deepslate_lapis_ore', worldConfig.foundationBlock),
+      redstoneOre: resolveConfiguredBlockStateId(mcData, 'redstone_ore', worldConfig.foundationBlock),
+      deepslateRedstoneOre: resolveConfiguredBlockStateId(mcData, 'deepslate_redstone_ore', worldConfig.foundationBlock),
+      emeraldOre: resolveConfiguredBlockStateId(mcData, 'emerald_ore', worldConfig.foundationBlock),
+      deepslateEmeraldOre: resolveConfiguredBlockStateId(mcData, 'deepslate_emerald_ore', worldConfig.foundationBlock),
+      deepslateIronOre: resolveConfiguredBlockStateId(mcData, 'deepslate_iron_ore', worldConfig.foundationBlock),
+      deepslateCopperOre: resolveConfiguredBlockStateId(mcData, 'deepslate_copper_ore', worldConfig.foundationBlock),
+      deepslateCoalOre: resolveConfiguredBlockStateId(mcData, 'deepslate_coal_ore', worldConfig.foundationBlock),
       water: resolveConfiguredBlockStateId(mcData, 'water', 'air'),
       waterMax: mcData.blocksByName.water?.maxStateId ?? resolveConfiguredBlockStateId(mcData, 'water', 'air')
     },
@@ -636,6 +660,18 @@ function getLegacyBiomeProfile(worldOptions, biomeKey) {
     return biomes.oldGrowthBirchForest.createProfile(worldOptions);
   }
 
+  if (biomeKey === 'desert') {
+    return biomes.desert.createProfile(worldOptions);
+  }
+
+  if (biomeKey === 'swamp') {
+    return biomes.swamp.createProfile(worldOptions);
+  }
+
+  if (biomeKey === 'snowyPlains') {
+    return biomes.snowyPlains.createProfile(worldOptions);
+  }
+
   return biomes.plains.createProfile(worldOptions);
 }
 
@@ -682,6 +718,18 @@ function getForcedBiomeProfile(worldOptions) {
 
   if (worldOptions.biomeName.includes('forest') && !worldOptions.biomeName.includes('birch')) {
     return biomes.forest.createProfile(worldOptions);
+  }
+
+  if (worldOptions.biomeName.includes('desert')) {
+    return biomes.desert.createProfile(worldOptions);
+  }
+
+  if (worldOptions.biomeName.includes('swamp')) {
+    return biomes.swamp.createProfile(worldOptions);
+  }
+
+  if (worldOptions.biomeName.includes('snowy') || worldOptions.biomeName.includes('snow')) {
+    return biomes.snowyPlains.createProfile(worldOptions);
   }
 
   if (worldOptions.biomeName.includes('plains') || worldOptions.biomeName.includes('meadow')) {
@@ -798,6 +846,21 @@ function getClimateBiomeWeights(climate) {
       getClimateBandWeight(climate.temperature, -0.5, 0.48) *
       getClimateBandWeight(climate.moisture, 0.16, 0.72) *
       (0.34 + (ruggedFactor * 0.28) + (climate.inlandness * 0.38) + (coolWeirdness * 0.12))
+    ),
+    desert: Math.max(0.001,
+      getClimateBandWeight(climate.temperature, 0.72, 0.38) *
+      getClimateBandWeight(climate.moisture, -0.62, 0.44) *
+      (0.38 + (flatFactor * 0.34) + ((1 - climate.inlandness) * 0.28))
+    ),
+    swamp: Math.max(0.001,
+      getClimateBandWeight(climate.temperature, 0.32, 0.52) *
+      getClimateBandWeight(climate.moisture, 0.52, 0.46) *
+      (0.32 + (flatFactor * 0.38) + (warmWeirdness * 0.3))
+    ),
+    snowyPlains: Math.max(0.001,
+      getClimateBandWeight(climate.temperature, -0.72, 0.36) *
+      getClimateBandWeight(climate.moisture, -0.08, 0.82) *
+      (0.36 + (flatFactor * 0.28) + (coolWeirdness * 0.36))
     )
   };
 }
@@ -838,7 +901,10 @@ function getLandClimateSelection(worldOptions, worldX, worldZ) {
     taiga: {
       ...getLegacyBiomeProfile(worldOptions, 'taiga'),
       allowWater: true
-    }
+    },
+    desert: biomes.desert.createProfile(worldOptions),
+    swamp: biomes.swamp.createProfile(worldOptions),
+    snowyPlains: biomes.snowyPlains.createProfile(worldOptions)
   };
   const totalWeight = Object.values(weights).reduce((sum, weight) => sum + weight, 0);
   const blendedTerrainAmplitudeOffset = Object.entries(weights).reduce(
@@ -2170,21 +2236,45 @@ function getTreeCandidate(worldOptions, surfaceY, spawn, cellX, cellZ) {
   });
 }
 
+function isInOreVein(worldOptions, worldX, worldY, worldZ, seedOffset, veinScale) {
+  const veinNoise1 = hashNoise2d(
+    (worldX * 0.73) + (worldY * 1.41),
+    (worldZ * 0.81) - (worldY * 0.93),
+    worldOptions.seedHash + seedOffset
+  );
+  const veinNoise2 = hashNoise2d(
+    (worldX * 0.57) - (worldY * 0.68),
+    (worldZ * 0.62) + (worldY * 1.17),
+    worldOptions.seedHash + seedOffset + 7
+  );
+  const veinCenter = veinNoise1 > 0.5;
+  const veinSpread = veinNoise2 > (1 - veinScale);
+  return veinCenter && veinSpread;
+}
+
 function resolveUndergroundBlockStateId(worldOptions, biomeProfile, worldX, worldY, worldZ, topY) {
   if (!worldOptions.useNaturalUndergroundGeneration) {
     return biomeProfile.foundationBlockStateId;
   }
 
   const depth = topY - worldY;
+  const isDeepslateLevel = worldY < 0;
+  const isTransitionLevel = worldY >= 0 && worldY < 8;
+  const transitionNoise = isTransitionLevel
+    ? hashNoise2d(worldX * 0.47 + worldY, worldZ * 0.53 - worldY, worldOptions.seedHash + 97)
+    : 0;
+  const useDeepslate = isDeepslateLevel || (isTransitionLevel && transitionNoise > (worldY / 8));
 
   if (biomeProfile.biomeKey === 'beach' && depth <= 6) {
     return worldOptions.terrainBlockStateIds.sandstone;
   }
 
-  if (biomeProfile.biomeKey === 'ocean') {
-    if (depth <= 5) {
-      return worldOptions.terrainBlockStateIds.sandstone;
-    }
+  if (biomeProfile.biomeKey === 'desert' && depth <= 8) {
+    return worldOptions.terrainBlockStateIds.sandstone;
+  }
+
+  if (biomeProfile.biomeKey === 'ocean' && depth <= 5) {
+    return worldOptions.terrainBlockStateIds.sandstone;
   }
 
   const oreNoise = hashNoise2d(
@@ -2193,16 +2283,80 @@ function resolveUndergroundBlockStateId(worldOptions, biomeProfile, worldX, worl
     worldOptions.seedHash + 101
   );
 
-  if (depth >= 7 && oreNoise > 0.993) {
-    return worldOptions.terrainBlockStateIds.ironOre;
+  if (depth >= 48 && worldY < -20 && isInOreVein(worldOptions, worldX, worldY, worldZ, 401, 0.14)) {
+    if (oreNoise > 0.6) {
+      return worldOptions.terrainBlockStateIds.deepslateDiamondOre;
+    }
   }
 
-  if (depth >= 5 && oreNoise > 0.987) {
-    return worldOptions.terrainBlockStateIds.copperOre;
+  if (depth >= 32 && worldY < 16 && isInOreVein(worldOptions, worldX, worldY, worldZ, 411, 0.18)) {
+    if (oreNoise > 0.55) {
+      return useDeepslate
+        ? worldOptions.terrainBlockStateIds.deepslateRedstoneOre
+        : worldOptions.terrainBlockStateIds.redstoneOre;
+    }
   }
 
-  if (depth >= 4 && oreNoise > 0.978) {
-    return worldOptions.terrainBlockStateIds.coalOre;
+  if (depth >= 24 && worldY < 32 && isInOreVein(worldOptions, worldX, worldY, worldZ, 421, 0.16)) {
+    if (oreNoise > 0.58) {
+      return useDeepslate
+        ? worldOptions.terrainBlockStateIds.deepslateGoldOre
+        : worldOptions.terrainBlockStateIds.goldOre;
+    }
+  }
+
+  if (depth >= 16 && worldY < 32 && isInOreVein(worldOptions, worldX, worldY, worldZ, 431, 0.15)) {
+    if (oreNoise > 0.6) {
+      return useDeepslate
+        ? worldOptions.terrainBlockStateIds.deepslateLapisOre
+        : worldOptions.terrainBlockStateIds.lapisOre;
+    }
+  }
+
+  if (depth >= 32 && worldY < 48 && isInOreVein(worldOptions, worldX, worldY, worldZ, 441, 0.12)) {
+    const rugged = hashNoise2d(worldX * 0.31, worldZ * 0.37, worldOptions.seedHash + 449);
+    if (rugged > 0.72) {
+      return useDeepslate
+        ? worldOptions.terrainBlockStateIds.deepslateEmeraldOre
+        : worldOptions.terrainBlockStateIds.emeraldOre;
+    }
+  }
+
+  if (depth >= 7 && isInOreVein(worldOptions, worldX, worldY, worldZ, 201, 0.22)) {
+    if (oreNoise > 0.52) {
+      return useDeepslate
+        ? worldOptions.terrainBlockStateIds.deepslateIronOre
+        : worldOptions.terrainBlockStateIds.ironOre;
+    }
+  }
+
+  if (depth >= 5 && worldY < 96 && isInOreVein(worldOptions, worldX, worldY, worldZ, 211, 0.2)) {
+    if (oreNoise > 0.54) {
+      return useDeepslate
+        ? worldOptions.terrainBlockStateIds.deepslateCopperOre
+        : worldOptions.terrainBlockStateIds.copperOre;
+    }
+  }
+
+  if (depth >= 4 && isInOreVein(worldOptions, worldX, worldY, worldZ, 221, 0.24)) {
+    if (oreNoise > 0.48) {
+      return useDeepslate
+        ? worldOptions.terrainBlockStateIds.deepslateCoalOre
+        : worldOptions.terrainBlockStateIds.coalOre;
+    }
+  }
+
+  if (useDeepslate) {
+    const tuffNoise = hashNoise2d(
+      (worldX * 0.41) + (worldY * 0.73),
+      (worldZ * 0.47) - (worldY * 0.31),
+      worldOptions.seedHash + 151
+    );
+    if (tuffNoise > 0.88) {
+      return worldOptions.terrainBlockStateIds.tuff;
+    }
+
+    return worldOptions.terrainBlockStateIds.deepslate;
   }
 
   const variantNoise = hashNoise2d(
@@ -2342,14 +2496,45 @@ function collectPopulationFeaturesForChunk(worldOptions, surfaceY, spawn, chunkX
 }
 
 function getCaveSignal(worldOptions, worldX, worldY, worldZ) {
-  const seedOffset = worldOptions.seedHash;
+  const seed = worldOptions.seedHash;
 
-  return (
-    (Math.sin((worldX + (seedOffset * 0.11)) * 0.115) * 0.95) +
-    (Math.cos((worldZ - (seedOffset * 0.07)) * 0.110) * 0.90) +
-    (Math.sin((worldY + (seedOffset * 0.05)) * 0.235) * 0.75) +
-    (Math.cos((worldX + worldZ + worldY + (seedOffset * 0.03)) * 0.052) * 0.70)
+  const worm1 = hashNoise2d(
+    (worldX * 0.052) + (worldY * 0.087),
+    (worldZ * 0.048) - (worldY * 0.063),
+    seed + 301
   );
+  const worm2 = hashNoise2d(
+    (worldX * 0.041) - (worldY * 0.072),
+    (worldZ * 0.058) + (worldY * 0.049),
+    seed + 317
+  );
+  const worm3 = hashNoise2d(
+    (worldX * 0.068) + (worldZ * 0.037),
+    (worldY * 0.093) - (worldX * 0.028),
+    seed + 331
+  );
+
+  const wormSignal = (worm1 * 0.45) + (worm2 * 0.35) + (worm3 * 0.2);
+
+  const spaghetti1 = hashNoise2d(
+    (worldX * 0.031) + (worldY * 0.112),
+    (worldZ * 0.027) - (worldY * 0.081),
+    seed + 347
+  );
+  const spaghetti2 = hashNoise2d(
+    (worldX * 0.024) - (worldY * 0.098),
+    (worldZ * 0.033) + (worldY * 0.067),
+    seed + 359
+  );
+  const spaghettiSignal = Math.abs(spaghetti1 - 0.5) + Math.abs(spaghetti2 - 0.5);
+
+  const cheese = hashNoise2d(
+    (worldX * 0.019) + (worldZ * 0.023),
+    (worldY * 0.041) + (worldX * 0.012),
+    seed + 373
+  );
+
+  return (wormSignal * 2.2) + ((1 - spaghettiSignal) * 1.5) + (cheese * 0.8);
 }
 
 function shouldCarveCave(worldOptions, spawn, column, worldX, worldY, worldZ) {
@@ -2375,7 +2560,8 @@ function shouldCarveCave(worldOptions, spawn, column, worldX, worldY, worldZ) {
     return false;
   }
 
-  const caveThreshold = caveDepth > 8 ? 1.72 : 1.88;
+  const depthFactor = clamp((caveDepth - CAVE_MIN_SURFACE_ROOF) / 16, 0, 1);
+  const caveThreshold = 2.8 - (depthFactor * 0.35);
   return getCaveSignal(worldOptions, worldX, worldY, worldZ) > caveThreshold;
 }
 
@@ -2441,8 +2627,13 @@ function createGeneratedChunk(worldOptions, surfaceY, spawn, chunkX, chunkZ) {
       chunk.setBlockStateId(new Vec3(localX, topY, localZ), topBlockStateId);
 
       if (column.waterTopY !== null) {
+        const isFreezing = biomeProfile.metadata && biomeProfile.metadata.temperature <= 0.15;
         for (let y = column.waterBottomY ?? (topY + 1); y <= column.waterTopY; y++) {
-          chunk.setBlockStateId(new Vec3(localX, y, localZ), worldOptions.terrainBlockStateIds.water);
+          if (isFreezing && y === column.waterTopY) {
+            chunk.setBlockStateId(new Vec3(localX, y, localZ), worldOptions.terrainBlockStateIds.ice);
+          } else {
+            chunk.setBlockStateId(new Vec3(localX, y, localZ), worldOptions.terrainBlockStateIds.water);
+          }
         }
       }
 
