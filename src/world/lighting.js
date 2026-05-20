@@ -211,14 +211,7 @@ function softenSkyLightForChunk(targetChunk, targetChunkX, targetChunkZ, worldOp
             const neighborY = y + offset.y;
             const neighborZ = worldPosition.z + offset.z;
 
-            if (
-              neighborY < minY ||
-              neighborY > maxY ||
-              neighborX < minWorldX ||
-              neighborX > maxWorldX ||
-              neighborZ < minWorldZ ||
-              neighborZ > maxWorldZ
-            ) {
+            if (neighborY < minY || neighborY > maxY) {
               continue;
             }
 
