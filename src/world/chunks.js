@@ -1,6 +1,6 @@
 const { SmartBuffer } = require('smart-buffer');
 const Vec3 = require('vec3');
-const Chunk = require('prismarine-chunk')('1.21.11');
+const { createChunk } = require('./chunk-factory');
 
 const HEIGHTMAP_TYPES = [
   'world_surface_wg',
@@ -145,7 +145,10 @@ function createChunkLightTemplate(chunk) {
 }
 
 function createTranslatedChunk(sourceChunk, translateStateId) {
-  const translatedChunk = new Chunk();
+  const translatedChunk = createChunk({
+    minWorldY: sourceChunk.minY,
+    worldHeight: sourceChunk.worldHeight
+  });
 
   for (let y = sourceChunk.minY; y < sourceChunk.minY + sourceChunk.worldHeight; y++) {
     for (let localZ = 0; localZ < 16; localZ++) {

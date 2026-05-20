@@ -50,6 +50,7 @@ function buildPlayerBootstrapPackets(client, config, world, loginPacket) {
   const safeSpawn = world.getSafeSpawnPosition();
   const worldState = buildWorldState(loginPacket, world);
   const playerStatus = buildPlayerStatusPackets();
+  const chunkDistance = world.streamRadius;
   const login = {
     ...loginPacket,
     enforceSecureChat: false,
@@ -59,8 +60,8 @@ function buildPlayerBootstrapPackets(client, config, world, loginPacket) {
     previousGameMode: 1,
     hashedSeed: [0, 0],
     maxPlayers: config.maxPlayers,
-    viewDistance: config.viewDistance,
-    simulationDistance: config.viewDistance,
+    viewDistance: chunkDistance,
+    simulationDistance: chunkDistance,
     reducedDebugInfo: false,
     enableRespawnScreen: true,
     isDebug: false,
@@ -105,7 +106,7 @@ function buildPlayerBootstrapPackets(client, config, world, loginPacket) {
     respawn: buildRespawnPacket(loginPacket, world),
     safeSpawn,
     simulationDistance: {
-      distance: config.viewDistance
+      distance: chunkDistance
     },
     spawnPosition: {
       globalPos: {
@@ -120,7 +121,7 @@ function buildPlayerBootstrapPackets(client, config, world, loginPacket) {
       pitch: config.spawn.pitch
     },
     viewDistance: {
-      viewDistance: config.viewDistance
+      viewDistance: chunkDistance
     },
     viewPosition: {
       chunkX: world.spawnChunk.x,

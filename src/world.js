@@ -1,7 +1,11 @@
 const Vec3 = require('vec3');
 const biomes = require('./biomes');
 const chunkHelpers = require('./world/chunks');
+const { createChunkFromJson } = require('./world/chunk-factory');
 const { createFluidHelpers } = require('./world/fluids');
+const { createSpawnHelpers } = require('./world/spawn');
+const { collectLightingChunkCoordinates } = require('./world/light-runtime');
+const { bakeChunkLightingRegion } = require('./world/lighting');
 const runtimeUtils = require('./world/runtime-utils');
 const generation = require('./world/generation');
 
@@ -22,8 +26,8 @@ const FACE_OFFSETS = {
 const { normalizePosition, getChunkKey, getBlockKey, toChunkCoordinates } = runtimeUtils;
 const {
   createGeneratedChunk,
+  getConfiguredSurfaceY,
   getSpawnChunk,
-  getSurfaceY,
   resolveWorldOptions
 } = generation;
 
@@ -89,9 +93,10 @@ function createChunkPacket(x, z, template) {
 
 function createInitialWorldPackets(mcData, config, savedWorldState = { blocks: [] }) {
   const worldOptions = resolveWorldOptions(mcData, config);
+  const chunkWorkerPool = config._chunkWorkerPool ?? null;
   const spawnReference = resolveSpawnReference(config, worldOptions);
   const spawnChunk = getSpawnChunk(spawnReference);
-  const surfaceY = getSurfaceY(spawnReference.y);
+  const surfaceY = getConfiguredSurfaceY(worldOptions, spawnReference.y);
   const minChunkX = spawnChunk.x - worldOptions.chunkRadius;
   const maxChunkX = spawnChunk.x + worldOptions.chunkRadius;
   const minChunkZ = spawnChunk.z - worldOptions.chunkRadius;
@@ -109,28 +114,82 @@ function createInitialWorldPackets(mcData, config, savedWorldState = { blocks: [
   const minBuildY = worldOptions.minWorldY;
   const waterSourceStateId = worldOptions.terrainBlockStateIds.water;
   const maxWaterStateId = worldOptions.terrainBlockStateIds.waterMax;
-  const lightTemplate = chunkHelpers.createChunkLightTemplate(
-    createGeneratedChunk(worldOptions, surfaceY, spawnReference, spawnChunk.x, spawnChunk.z)
-  );
   const chunks = new Map();
   const generatedChunks = new Map();
   const modifiedBlocks = new Map();
+
+  function shouldPerformImmediateLightUpdate(previousStateId, nextStateId) {
+    const previousBlock = mcData.blocksByStateId[previousStateId];
+    const nextBlock = mcData.blocksByStateId[nextStateId];
+
+    return (
+      (previousBlock?.emitLight ?? 0) > 0 ||
+      (nextBlock?.emitLight ?? 0) > 0
+    );
+  }
+
+  function createChunkEntry(chunkX, chunkZ) {
+    return {
+      chunk: null,
+      chunkJson: null,
+      chunkX,
+      chunkZ,
+      generationPromise: null,
+      lightingDirty: false,
+      packetTemplate: null,
+      translatedPacketTemplates: new Map()
+    };
+  }
+
+  function collectChunkNeighborhood(chunkX, chunkZ, radius = 1) {
+    const coordinates = [];
+
+    for (let dz = -radius; dz <= radius; dz++) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        coordinates.push({
+          chunkX: chunkX + dx,
+          chunkZ: chunkZ + dz
+        });
+      }
+    }
+
+    return coordinates;
+  }
+
+  function markChunkLightingNeighborhoodDirty(chunkX, chunkZ, radius = 1) {
+    markLightingDirtyForChunkCoordinates(collectChunkNeighborhood(chunkX, chunkZ, radius));
+  }
+
+  function materializeChunkEntry(chunkEntry) {
+    if (chunkEntry.chunk) {
+      return chunkEntry.chunk;
+    }
+
+    if (chunkEntry.chunkJson) {
+      chunkEntry.chunk = createChunkFromJson(chunkEntry.chunkJson);
+      return chunkEntry.chunk;
+    }
+
+    return null;
+  }
 
   function ensureChunk(chunkX, chunkZ) {
     const chunkKey = getChunkKey(chunkX, chunkZ);
 
     if (!chunks.has(chunkKey)) {
-      const chunk = createGeneratedChunk(worldOptions, surfaceY, spawnReference, chunkX, chunkZ);
-      chunks.set(chunkKey, {
-        chunkX,
-        chunkZ,
-        chunk,
-        packetTemplate: null,
-        translatedPacketTemplates: new Map()
-      });
+      const chunkEntry = createChunkEntry(chunkX, chunkZ);
+      chunkEntry.chunk = createGeneratedChunk(worldOptions, surfaceY, spawnReference, chunkX, chunkZ);
+      chunks.set(chunkKey, chunkEntry);
+      markChunkLightingNeighborhoodDirty(chunkX, chunkZ);
     }
 
-    return chunks.get(chunkKey);
+    const chunkEntry = chunks.get(chunkKey);
+
+    if (!chunkEntry.chunk) {
+      materializeChunkEntry(chunkEntry);
+    }
+
+    return chunkEntry;
   }
 
   function ensureGeneratedChunk(chunkX, chunkZ) {
@@ -144,6 +203,50 @@ function createInitialWorldPackets(mcData, config, savedWorldState = { blocks: [
     }
 
     return generatedChunks.get(chunkKey);
+  }
+
+  function getChunkAt(chunkX, chunkZ) {
+    return ensureChunk(chunkX, chunkZ).chunk;
+  }
+
+  function preGenerateChunkAsync(chunkX, chunkZ) {
+    if (!chunkWorkerPool) {
+      ensureChunk(chunkX, chunkZ);
+      return Promise.resolve();
+    }
+
+    const chunkKey = getChunkKey(chunkX, chunkZ);
+    let chunkEntry = chunks.get(chunkKey);
+
+    if (!chunkEntry) {
+      chunkEntry = createChunkEntry(chunkX, chunkZ);
+      chunks.set(chunkKey, chunkEntry);
+    }
+
+    if (chunkEntry.chunk || chunkEntry.chunkJson || chunkEntry.generationPromise) {
+      return chunkEntry.generationPromise ?? Promise.resolve();
+    }
+
+    chunkEntry.generationPromise = chunkWorkerPool.generateChunk({
+      chunkX,
+      chunkZ,
+      spawnReference,
+      surfaceY,
+      worldConfig: worldOptions
+    }).then((result) => {
+      if (!chunkEntry.chunk) {
+        chunkEntry.chunkJson = result.chunkJson;
+      }
+
+      markChunkLightingNeighborhoodDirty(chunkX, chunkZ);
+      chunkEntry.generationPromise = null;
+    }).catch((error) => {
+      chunkEntry.generationPromise = null;
+      chunks.delete(chunkKey);
+      throw error;
+    });
+
+    return chunkEntry.generationPromise;
   }
 
   function isWithinPlatformBounds(position) {
@@ -203,7 +306,62 @@ function createInitialWorldPackets(mcData, config, savedWorldState = { blocks: [
     chunkEntry.translatedPacketTemplates?.clear();
   }
 
+  function rebakeLightingForChunkCoordinates(chunkCoordinates) {
+    const rebakedChunks = [];
+
+    for (const { chunkX, chunkZ } of chunkCoordinates) {
+      const chunkKey = getChunkKey(chunkX, chunkZ);
+
+      if (!chunks.has(chunkKey)) {
+        continue;
+      }
+
+      const chunkEntry = chunks.get(chunkKey);
+      materializeChunkEntry(chunkEntry);
+
+      bakeChunkLightingRegion(chunkX, chunkZ, worldOptions, getChunkAt);
+      chunkEntry.lightingDirty = false;
+      rebakedChunks.push({ chunkX, chunkZ });
+    }
+
+    return rebakedChunks;
+  }
+
+  function markLightingDirtyForChunkCoordinates(chunkCoordinates) {
+    for (const { chunkX, chunkZ } of chunkCoordinates) {
+      const chunkKey = getChunkKey(chunkX, chunkZ);
+
+      if (!chunks.has(chunkKey)) {
+        continue;
+      }
+
+      chunks.get(chunkKey).lightingDirty = true;
+    }
+  }
+
+  function markLightingDirtyForPositions(positions) {
+    markLightingDirtyForChunkCoordinates(collectLightingChunkCoordinates(positions));
+  }
+
+  function rebakeLightingForPositions(positions) {
+    return rebakeLightingForChunkCoordinates(collectLightingChunkCoordinates(positions));
+  }
+
+  function ensureChunkLighting(chunkX, chunkZ) {
+    const chunkEntry = ensureChunk(chunkX, chunkZ);
+
+    if (!chunkEntry.lightingDirty) {
+      return chunkEntry;
+    }
+
+    bakeChunkLightingRegion(chunkX, chunkZ, worldOptions, getChunkAt);
+    chunkEntry.lightingDirty = false;
+    return chunkEntry;
+  }
+
   function getCachedChunkTemplate(chunkEntry, translateStateId = null) {
+    materializeChunkEntry(chunkEntry);
+
     if (typeof translateStateId !== 'function') {
       if (!chunkEntry.packetTemplate) {
         chunkEntry.packetTemplate = createChunkTemplate(chunkEntry.chunk, surfaceY, worldOptions);
@@ -245,60 +403,17 @@ function createInitialWorldPackets(mcData, config, savedWorldState = { blocks: [
     return chunkEntry.chunkEntry.chunk.getBlockStateId(chunkEntry.localPosition);
   }
 
-  function isAirBlock(position) {
-    return getBlockState(position) === airBlockStateId;
-  }
-
-  function findSafeStandingY(x, z) {
-    for (let blockY = maxBuildY - 2; blockY >= minBuildY; blockY--) {
-      const feetPosition = { x, y: blockY + 1, z };
-      const headPosition = { x, y: blockY + 2, z };
-
-      if (
-        !isAirBlock({ x, y: blockY, z }) &&
-        isAirBlock(feetPosition) &&
-        isAirBlock(headPosition)
-      ) {
-        return feetPosition.y;
-      }
-    }
-
-    return null;
-  }
-
-  function getSafeSpawnPosition(preferredSpawn = spawnReference) {
-    const preferredX = clamp(Math.floor(preferredSpawn?.x ?? spawnReference.x), minX, maxX);
-    const preferredZ = clamp(Math.floor(preferredSpawn?.z ?? spawnReference.z), minZ, maxZ);
-    let bestCandidate = null;
-    let bestScore = Number.POSITIVE_INFINITY;
-
-    for (let x = minX; x <= maxX; x++) {
-      for (let z = minZ; z <= maxZ; z++) {
-        const standingY = findSafeStandingY(x, z);
-
-        if (standingY === null) {
-          continue;
-        }
-
-        const score = Math.abs(x - preferredX) + Math.abs(z - preferredZ);
-
-        if (score < bestScore) {
-          bestScore = score;
-          bestCandidate = { x, y: standingY, z };
-        }
-      }
-    }
-
-    if (bestCandidate) {
-      return bestCandidate;
-    }
-
-    return {
-      x: preferredX,
-      y: surfaceY + 1,
-      z: preferredZ
-    };
-  }
+  const { getSafeSpawnPosition } = createSpawnHelpers({
+    getBlockState,
+    getBlockDefinition: (stateId) => mcData.blocksByStateId[stateId],
+    maxBuildY,
+    maxX,
+    maxZ,
+    minBuildY,
+    minX,
+    minZ,
+    spawnReference
+  });
 
   function setBlockState(position, stateId) {
     if (!isWithinBuildBounds(position)) {
@@ -311,12 +426,16 @@ function createInitialWorldPackets(mcData, config, savedWorldState = { blocks: [
       return false;
     }
 
+    const previousStateId = chunkEntry.chunkEntry.chunk.getBlockStateId(chunkEntry.localPosition);
     chunkEntry.chunkEntry.chunk.setBlockStateId(chunkEntry.localPosition, stateId);
     invalidateChunkPacketTemplates(chunkEntry.chunkEntry);
 
     const worldPosition = normalizePosition(chunkEntry.worldPosition);
-    const baseStateId = getBaseBlockState(worldPosition);
+    markLightingDirtyForPositions([worldPosition]);
     const blockKey = getBlockKey(worldPosition);
+    const baseStateId = modifiedBlocks.has(blockKey)
+      ? getBaseBlockState(worldPosition)
+      : previousStateId;
 
     if (stateId === baseStateId) {
       modifiedBlocks.delete(blockKey);
@@ -373,9 +492,13 @@ function createInitialWorldPackets(mcData, config, savedWorldState = { blocks: [
     }
 
     const changedPositions = [normalizedPosition, ...recomputeWaterAround(normalizedPosition)];
+    const lightChunkCoordinates = shouldPerformImmediateLightUpdate(currentStateId, airBlockStateId)
+      ? rebakeLightingForPositions([normalizedPosition])
+      : [];
 
     return {
       changedPositions,
+      lightChunkCoordinates,
       droppedItem: Number.isInteger(droppedItemId)
         ? { itemId: droppedItemId, count: 1 }
         : null,
@@ -401,8 +524,14 @@ function createInitialWorldPackets(mcData, config, savedWorldState = { blocks: [
       return false;
     }
 
+    const changedPositions = [normalizedPosition, ...recomputeWaterAround(normalizedPosition)];
+    const lightChunkCoordinates = shouldPerformImmediateLightUpdate(currentStateId, stateId)
+      ? rebakeLightingForPositions([normalizedPosition])
+      : [];
+
     return {
-      changedPositions: [normalizedPosition, ...recomputeWaterAround(normalizedPosition)],
+      changedPositions,
+      lightChunkCoordinates,
       position: normalizedPosition,
       stateId
     };
@@ -417,13 +546,40 @@ function createInitialWorldPackets(mcData, config, savedWorldState = { blocks: [
   }
 
   function getChunkPacket(chunkX, chunkZ, translateStateId = null) {
-    const chunkEntry = ensureChunk(chunkX, chunkZ);
+    const chunkKey = getChunkKey(chunkX, chunkZ);
+
+    if (chunkWorkerPool && chunks.has(chunkKey)) {
+      const existingEntry = chunks.get(chunkKey);
+
+      if (!existingEntry.chunk && !existingEntry.chunkJson) {
+        return null;
+      }
+    }
+
+    const chunkEntry = ensureChunkLighting(chunkX, chunkZ);
     const template = getCachedChunkTemplate(chunkEntry, translateStateId);
+    const lightTemplate = chunkHelpers.createChunkLightTemplate(chunkEntry.chunk);
 
     return createChunkPacket(chunkX, chunkZ, {
       ...template,
       ...lightTemplate
     });
+  }
+
+  function getChunkLightUpdate(chunkX, chunkZ) {
+    const chunkEntry = ensureChunkLighting(chunkX, chunkZ);
+    const lightTemplate = chunkHelpers.createChunkLightTemplate(chunkEntry.chunk);
+
+    return {
+      chunkX,
+      chunkZ,
+      skyLightMask: lightTemplate.skyLightMask,
+      blockLightMask: lightTemplate.blockLightMask,
+      emptySkyLightMask: lightTemplate.emptySkyLightMask,
+      emptyBlockLightMask: lightTemplate.emptyBlockLightMask,
+      skyLight: lightTemplate.skyLight,
+      blockLight: lightTemplate.blockLight
+    };
   }
 
   function getChunkPackets(centerChunkX, centerChunkZ, radius, translateStateId = null) {
@@ -467,10 +623,16 @@ function createInitialWorldPackets(mcData, config, savedWorldState = { blocks: [
     setBlockState(block, block.stateId);
   }
 
+  if ((savedWorldState.blocks ?? []).length > 0) {
+    rebakeLightingForPositions(savedWorldState.blocks);
+  }
+
   return {
     airBlockStateId,
     breakBlock,
-    chunks: createChunkPackets(),
+    get chunks() {
+      return createChunkPackets();
+    },
     createChunkPackets,
     fillBlockStateId,
     foundationBlockStateId: worldOptions.foundationBlockStateId,
@@ -480,6 +642,7 @@ function createInitialWorldPackets(mcData, config, savedWorldState = { blocks: [
       return chunkEntry ? chunkEntry.chunkEntry.chunk.getBiome(chunkEntry.localPosition) : worldOptions.biomeId;
     },
     getBlockState,
+    getChunkLightUpdate,
     getChunkPacket,
     getChunkPackets,
     getSafeSpawnPosition,
@@ -543,10 +706,14 @@ function createInitialWorldPackets(mcData, config, savedWorldState = { blocks: [
     ,
     populationFeaturePasses: ['ponds', 'trees', 'decorations'],
     hasChunk(chunkX, chunkZ) {
-      return chunks.has(getChunkKey(chunkX, chunkZ));
+      const chunkEntry = chunks.get(getChunkKey(chunkX, chunkZ));
+      return Boolean(chunkEntry?.chunk || chunkEntry?.chunkJson);
     },
     preGenerateChunk(chunkX, chunkZ) {
-      ensureChunk(chunkX, chunkZ);
+      return preGenerateChunkAsync(chunkX, chunkZ);
+    },
+    getChunkNeighborhood(chunkX, chunkZ, radius = 1) {
+      return collectChunkNeighborhood(chunkX, chunkZ, radius);
     }
   };
 }

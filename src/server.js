@@ -15,6 +15,8 @@ const {
   buildCompatibilityRegistryCodec,
   loadCompatibilityRegistryOverrides
 } = require('./compatibility-registry');
+const { applyWorldDimensionBounds } = require('./world/dimension-codec');
+const { createChunkWorkerPool } = require('./world/chunk-worker-pool');
 const {
   createCompatibilityInboundPlayPacketRewriter,
   is2612Compatibility,
@@ -44,7 +46,7 @@ const {
 } = require('./server/player-state');
 const { resolveVersionTarget } = require('./versioning');
 
-const VOID_RESPAWN_Y = -32;
+const VOID_RESPAWN_MARGIN = 32;
 const WORLD_TIME_TICK_INTERVAL_MS = 1000;
 const WORLD_TIME_TICK_AMOUNT = 20n;
 const DAY_LENGTH_TICKS = 24000n;
@@ -58,8 +60,12 @@ function createMinecraftServer(overrides = {}) {
   const config = loadConfig(overrides);
   const versionTarget = resolveVersionTarget(config.version);
   const mcData = require('minecraft-data')(versionTarget.protocolDataVersion);
+  const chunkWorkerPool = createChunkWorkerPool();
   const persistedWorldState = loadWorldState(config.worldSavePath);
-  const world = createInitialWorldPackets(mcData, config, persistedWorldState);
+  const world = createInitialWorldPackets(mcData, {
+    ...config,
+    _chunkWorkerPool: chunkWorkerPool
+  }, persistedWorldState);
   const baseRegistryCodec = mcData.registryCodec || mcData.loginPacket?.dimensionCodec || {};
   const registryOverrides = versionTarget.compatibility
     ? loadCompatibilityRegistryOverrides(versionTarget.advertisedVersion)
@@ -70,6 +76,8 @@ function createMinecraftServer(overrides = {}) {
   const registryCodec = versionTarget.compatibility
     ? buildCompatibilityRegistryCodec(baseRegistryCodec, registryOverrides)
     : baseRegistryCodec;
+  const resolvedRegistryCodec = applyWorldDimensionBounds(registryCodec, world);
+  const voidRespawnY = world.minWorldY - VOID_RESPAWN_MARGIN;
   const server = mc.createServer({
     host: config.host,
     port: config.port,
@@ -81,7 +89,7 @@ function createMinecraftServer(overrides = {}) {
       console.error(`[client:error] ${client.username ?? 'unknown'} (${client.socket?.remoteAddress ?? 'n/a'}:${client.socket?.remotePort ?? 'n/a'})`, err);
       client.end(err instanceof Error ? err.message : String(err));
     },
-    registryCodec,
+    registryCodec: resolvedRegistryCodec,
     ...versionTarget.createServerOptions
   });
   const loginPacket = mcData.loginPacket;
@@ -99,8 +107,14 @@ function createMinecraftServer(overrides = {}) {
     : 0;
   server.compatibilityTagTypeCount = server.compatibilityTags.length;
   server.world = world;
+  server.registryCodec = resolvedRegistryCodec;
   server.worldTimeState = buildPlayerStatusPackets().time;
   server._ragecraftCleanupHandlers = [];
+  server._ragecraftCleanupHandlers.push(() => {
+    chunkWorkerPool.close().catch((error) => {
+      console.error('[chunk-worker:close:error]', error);
+    });
+  });
 
   function connectedClients(excludeClient = null) {
     return Object.values(server.clients).filter((client) => client !== excludeClient);
@@ -224,6 +238,62 @@ function createMinecraftServer(overrides = {}) {
 
       for (const client of connectedClients()) {
         writePlayPacket(client, 'block_change', blockChangePacket);
+      }
+    }
+  }
+
+  function broadcastLightUpdates(chunkCoordinates) {
+    const seen = new Set();
+
+    for (const { chunkX, chunkZ } of chunkCoordinates ?? []) {
+      const chunkKey = `${chunkX},${chunkZ}`;
+
+      if (seen.has(chunkKey)) {
+        continue;
+      }
+
+      seen.add(chunkKey);
+      const lightUpdatePacket = world.getChunkLightUpdate(chunkX, chunkZ);
+
+      for (const client of connectedClients()) {
+        writePlayPacket(client, 'update_light', lightUpdatePacket);
+      }
+    }
+  }
+
+  function broadcastLoadedChunkLightUpdates(chunkCoordinates) {
+    const seen = new Set();
+
+    for (const { chunkX, chunkZ } of chunkCoordinates ?? []) {
+      const chunkKey = `${chunkX},${chunkZ}`;
+
+      if (seen.has(chunkKey)) {
+        continue;
+      }
+
+      seen.add(chunkKey);
+
+      let hasInterestedClient = false;
+
+      for (const client of connectedClients()) {
+        if (client.loadedChunkKeys?.has(chunkKey)) {
+          hasInterestedClient = true;
+          break;
+        }
+      }
+
+      if (!hasInterestedClient) {
+        continue;
+      }
+
+      const lightUpdatePacket = world.getChunkLightUpdate(chunkX, chunkZ);
+
+      for (const client of connectedClients()) {
+        if (!client.loadedChunkKeys?.has(chunkKey)) {
+          continue;
+        }
+
+        writePlayPacket(client, 'update_light', lightUpdatePacket);
       }
     }
   }
@@ -617,7 +687,9 @@ function createMinecraftServer(overrides = {}) {
           continue;
         }
 
-        world.preGenerateChunk(entry.chunkX, entry.chunkZ);
+        world.preGenerateChunk(entry.chunkX, entry.chunkZ).catch((error) => {
+          console.error('[chunk-worker:error]', error);
+        });
 
         const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
 
@@ -676,6 +748,7 @@ function createMinecraftServer(overrides = {}) {
         }
 
         generated += 1;
+        continue;
       }
 
       const chunkPacket = world.getChunkPacket(
@@ -689,6 +762,10 @@ function createMinecraftServer(overrides = {}) {
       client.pendingChunkKeys.delete(chunkKey);
       toRemove.add(i);
       sent += 1;
+      broadcastLoadedChunkLightUpdates(
+        world.getChunkNeighborhood(entry.chunkX, entry.chunkZ)
+          .filter(({ chunkX, chunkZ }) => !(chunkX === entry.chunkX && chunkZ === entry.chunkZ))
+      );
     }
 
     if (toRemove.size > 0) {
@@ -868,6 +945,7 @@ function createMinecraftServer(overrides = {}) {
       if (breakResult) {
         saveWorld();
         broadcastAuthoritativeBlockStates(breakResult.changedPositions ?? [packet.location]);
+        broadcastLightUpdates(breakResult.lightChunkCoordinates);
 
         if (breakResult.droppedItem) {
           itemDropManager.spawnDrop(
@@ -897,6 +975,7 @@ function createMinecraftServer(overrides = {}) {
         const consumed = consumeSelectedItem(client.inventoryState);
         saveWorld();
         broadcastAuthoritativeBlockStates(placeResult.changedPositions ?? [placedBlockLocation]);
+        broadcastLightUpdates(placeResult.lightChunkCoordinates);
 
         if (consumed) {
           sendInventorySlotUpdate(client, consumed.slot);
@@ -921,7 +1000,7 @@ function createMinecraftServer(overrides = {}) {
     client.on('position', (packet) => {
       itemDropManager.setClientPosition(client, packet);
 
-      if ((packet.y ?? 0) < VOID_RESPAWN_Y) {
+      if ((packet.y ?? 0) < voidRespawnY) {
         respawnPlayer(client);
         return;
       }
@@ -932,7 +1011,7 @@ function createMinecraftServer(overrides = {}) {
     client.on('position_look', (packet) => {
       itemDropManager.setClientPosition(client, packet);
 
-      if ((packet.y ?? 0) < VOID_RESPAWN_Y) {
+      if ((packet.y ?? 0) < voidRespawnY) {
         respawnPlayer(client);
         return;
       }

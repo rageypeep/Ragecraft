@@ -1,9 +1,10 @@
-const Chunk = require('prismarine-chunk')('1.21.11');
 const Vec3 = require('vec3');
 const biomes = require('../biomes');
+const { createChunk, getDefaultChunkDimensions } = require('./chunk-factory');
 const treeObjects = require('./objects/trees');
 const pondObjects = require('./objects/ponds');
 const decorationObjects = require('./objects/decorations');
+const { bakeChunkLighting } = require('./lighting');
 const {
   clamp,
   lerp,
@@ -18,8 +19,10 @@ const {
   getTerrainHeight,
   getSpawnSafeTopY,
   getTerrainRelief,
-  getMountainBiomeKey
+  getMountainBiomeKey,
+  getFoothillBiomeKey
 } = require('./terrain');
+const { LANDFORM_TYPES, getLandformType, remapBiomeKeyForLandform } = require('./landforms');
 const {
   getTemperatureNoise,
   getLandClimateSelection,
@@ -32,9 +35,9 @@ const {
   shouldUseStonyBankSurface,
   getCoastProximityBlend,
   getOceanColumnDescriptor,
-  getLakeColumnDescriptor,
-  getRiverColumnDescriptor
+  getLakeColumnDescriptor
 } = require('./hydrology');
+const { getRiverColumnDescriptor } = require('./rivers');
 
 const SEA_LEVEL_Y = 63;
 const SURFACE_REFERENCE_Y = SEA_LEVEL_Y + 1;
@@ -67,9 +70,18 @@ function getSpawnChunk(spawn) {
 }
 
 function getSurfaceY(spawnY) {
-  const probeChunk = new Chunk();
-  const minSurfaceY = probeChunk.minY + 1;
-  const maxSurfaceY = probeChunk.minY + probeChunk.worldHeight - 1;
+  const {
+    minWorldY,
+    maxWorldY
+  } = getDefaultChunkDimensions();
+  const minSurfaceY = minWorldY + 1;
+  const maxSurfaceY = maxWorldY - 1;
+  return clamp(SURFACE_REFERENCE_Y, minSurfaceY, maxSurfaceY);
+}
+
+function getConfiguredSurfaceY(worldOptions, spawnY) {
+  const minSurfaceY = worldOptions.minWorldY + 1;
+  const maxSurfaceY = worldOptions.maxWorldY - 1;
   return clamp(SURFACE_REFERENCE_Y, minSurfaceY, maxSurfaceY);
 }
 
@@ -95,12 +107,31 @@ function resolveBiomeId(mcData, names, fallbackId) {
   return fallbackId;
 }
 
+function resolveLightPassThroughStateRanges(mcData) {
+  return (mcData.blocksArray ?? [])
+    .filter((block) => block?.transparent && Number.isInteger(block.minStateId) && Number.isInteger(block.maxStateId))
+    .map((block) => ({
+      minStateId: block.minStateId,
+      maxStateId: block.maxStateId
+    }));
+}
+
+function resolveLightEmissionStateRanges(mcData) {
+  return (mcData.blocksArray ?? [])
+    .filter((block) => Number.isInteger(block?.emitLight) && block.emitLight > 0 && Number.isInteger(block.minStateId) && Number.isInteger(block.maxStateId))
+    .map((block) => ({
+      minStateId: block.minStateId,
+      maxStateId: block.maxStateId,
+      emitLight: block.emitLight
+    }));
+}
+
 function isNearSpawn(spawn, x, z, radius = TREE_SPAWN_CLEAR_RADIUS) {
   return Math.abs(x - spawn.x) <= radius && Math.abs(z - spawn.z) <= radius;
 }
 
 function resolveWorldOptions(mcData, config = {}) {
-  const probeChunk = new Chunk();
+  const defaultDimensions = getDefaultChunkDimensions();
   const worldConfig = {
     ...DEFAULT_WORLD_OPTIONS,
     ...(config.world ?? {})
@@ -112,6 +143,15 @@ function resolveWorldOptions(mcData, config = {}) {
   const configuredSoilUsesDefault = worldConfig.soilBlock === DEFAULT_WORLD_OPTIONS.soilBlock;
   const useBiomeSurfacePalettes = configuredSurfaceUsesDefault && configuredSoilUsesDefault;
   const useNaturalUndergroundGeneration = configuredFoundationUsesDefault;
+  const configuredWorldHeight = Number.isInteger(worldConfig.worldHeight)
+    ? worldConfig.worldHeight
+    : defaultDimensions.worldHeight;
+  const configuredMinWorldY = Number.isInteger(worldConfig.minY)
+    ? worldConfig.minY
+    : defaultDimensions.minWorldY;
+  const worldHeight = Math.max(16, Math.floor(configuredWorldHeight / 16) * 16);
+  const minWorldY = Math.floor(configuredMinWorldY / 16) * 16;
+  const maxWorldY = minWorldY + worldHeight - 1;
 
   return {
     biomeId: fallbackBiomeId,
@@ -185,8 +225,8 @@ function resolveWorldOptions(mcData, config = {}) {
       sunflowerUpper: mcData.blocksByName.sunflower?.minStateId ?? resolveConfiguredBlockStateId(mcData, 'dandelion', 'air'),
       sunflowerLower: resolveConfiguredBlockStateId(mcData, 'sunflower', 'air'),
       fern: resolveConfiguredBlockStateId(mcData, 'fern', 'air'),
-      largeFernUpper: resolveConfiguredBlockStateId(mcData, 'large_fern', 'air'),
-      largeFernLower: mcData.blocksByName.large_fern?.minStateId ?? resolveConfiguredBlockStateId(mcData, 'fern', 'air'),
+      largeFernUpper: mcData.blocksByName.large_fern?.minStateId ?? resolveConfiguredBlockStateId(mcData, 'fern', 'air'),
+      largeFernLower: resolveConfiguredBlockStateId(mcData, 'large_fern', 'air'),
       seagrass: resolveConfiguredBlockStateId(mcData, 'seagrass', 'air'),
       dandelion: resolveConfiguredBlockStateId(mcData, 'dandelion', 'air'),
       poppy: resolveConfiguredBlockStateId(mcData, 'poppy', 'air'),
@@ -245,10 +285,13 @@ function resolveWorldOptions(mcData, config = {}) {
     },
     useBiomeSurfacePalettes,
     useNaturalUndergroundGeneration,
+    lightPassThroughStateRanges: resolveLightPassThroughStateRanges(mcData),
+    lightEmissionStateRanges: resolveLightEmissionStateRanges(mcData),
     terrainAmplitude: Math.max(0, worldConfig.terrainAmplitude),
     terrainThickness: Math.max(4, worldConfig.terrainThickness),
-    minWorldY: probeChunk.minY,
-    maxWorldY: probeChunk.minY + probeChunk.worldHeight - 1,
+    minWorldY,
+    maxWorldY,
+    worldHeight,
     _terrainHeightCache: new Map(),
     _columnDescriptorCache: new Map()
   };
@@ -291,7 +334,8 @@ function getColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ) {
     worldZ,
     surfaceY,
     worldOptions.terrainAmplitude + blendedLandTerrainOffset,
-    worldOptions.seedHash
+    worldOptions.seedHash,
+    worldOptions.maxWorldY
   );
   const waterLevel = surfaceY - 1;
   const baseTopY = getSpawnSafeTopY(worldOptions, surfaceY, spawn, worldX, worldZ, baseTerrainMetrics.topY);
@@ -305,6 +349,16 @@ function getColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ) {
     baseTerrainMetrics,
     landClimateSelection
   );
+  const initialLocalRelief = getTerrainRelief(worldOptions, surfaceY, worldX, worldZ, 2);
+  const initialLandformType = getLandformType(baseTerrainMetrics, baseLandTopY - waterLevel, initialLocalRelief);
+  const remappedLandBiomeKey = remapBiomeKeyForLandform(
+    landBiomeProfile.biomeKey,
+    initialLandformType,
+    columnClimate
+  );
+  const adjustedLandBiomeProfile = remappedLandBiomeKey !== landBiomeProfile.biomeKey
+    ? biomes[remappedLandBiomeKey]?.createProfile(worldOptions) ?? landBiomeProfile
+    : landBiomeProfile;
 
   const oceanColumn = getOceanColumnDescriptor(
     worldOptions,
@@ -340,7 +394,8 @@ function getColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ) {
     baseTerrainMetrics,
     columnClimate,
     oceanColumn,
-    lakeColumn
+    lakeColumn,
+    initialLandformType
   );
   const lakeShoreColumn = !oceanColumn.active &&
     !lakeColumn.active &&
@@ -372,7 +427,8 @@ function getColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ) {
     ? getCoastProximityBlend(worldOptions, surfaceY, spawn, worldX, worldZ)
     : oceanColumn.oceanBlend ?? 0;
   const preCoastElevationAboveWater = preCoastTopY - waterLevel;
-  const localRelief = getTerrainRelief(worldOptions, surfaceY, worldX, worldZ, 2);
+  const localRelief = initialLocalRelief;
+  const preBlendLandformType = getLandformType(baseTerrainMetrics, preCoastElevationAboveWater, localRelief);
   const coastalShelfFactor = 1 - smoothstep(clamp((baseTerrainMetrics.inlandness - 0.28) / 0.26, 0, 1));
   const coastalShelfBlend = smoothstep(clamp((coastBlend - 0.02) / 0.48, 0, 1)) * coastalShelfFactor;
   const coastalLandColumn = worldOptions.mixedBiomes &&
@@ -380,6 +436,7 @@ function getColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ) {
     !lakeColumn.active &&
     !riverColumn.active &&
     coastalShelfBlend > 0.03 &&
+    preBlendLandformType === LANDFORM_TYPES.COASTAL_LOWLANDS &&
     preCoastElevationAboveWater >= 0 &&
     preCoastElevationAboveWater <= 24;
   const useStonyShore = coastalLandColumn && (
@@ -452,11 +509,51 @@ function getColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ) {
           )
     )
     : null;
-  const topY = coastalLandColumn && coastShoreTopY !== null
+  let topY = coastalLandColumn && coastShoreTopY !== null
     ? coastShoreTopY
     : preCoastTopY;
-  const elevationAboveWater = topY - waterLevel;
-  const mountainBiomeKey = getMountainBiomeKey(baseTerrainMetrics, columnClimate, elevationAboveWater);
+  let elevationAboveWater = topY - waterLevel;
+  let landformType = getLandformType(baseTerrainMetrics, elevationAboveWater, localRelief);
+  const mountainBiomeKey = getMountainBiomeKey(baseTerrainMetrics, columnClimate, elevationAboveWater, localRelief);
+  const foothillBiomeKey = !mountainBiomeKey
+    ? getFoothillBiomeKey(baseTerrainMetrics, columnClimate, elevationAboveWater, localRelief)
+    : null;
+  if (foothillBiomeKey) {
+    const foothillTargetTopY = getFoothillBlendTopY(
+      worldOptions,
+      surfaceY,
+      worldX,
+      worldZ,
+      worldOptions.terrainAmplitude + blendedLandTerrainOffset
+    );
+    const foothillBlend = Math.min(
+      0.58,
+      (baseTerrainMetrics.foothillness ?? 0) *
+      (1 - smoothstep(clamp((baseTerrainMetrics.cliffiness - 0.12) / 0.16, 0, 1))) *
+      smoothstep(clamp((elevationAboveWater - 8) / 18, 0, 1))
+    );
+    const blendedFoothillTopY = Math.round(lerp(topY, foothillTargetTopY, foothillBlend));
+    topY = clamp(blendedFoothillTopY, topY - 16, topY + 4);
+    elevationAboveWater = topY - waterLevel;
+    landformType = getLandformType(baseTerrainMetrics, elevationAboveWater, localRelief);
+  }
+  if (mountainBiomeKey === 'meadow') {
+    const shelfTargetTopY = getHighlandShelfTopY(
+      worldOptions,
+      surfaceY,
+      worldX,
+      worldZ,
+      worldOptions.terrainAmplitude + blendedLandTerrainOffset
+    );
+    const meadowFlatness = 1 - smoothstep(clamp((localRelief - 5) / 8, 0, 1));
+    const cliffSuppression = 1 - smoothstep(clamp((baseTerrainMetrics.cliffiness - 0.12) / 0.16, 0, 1));
+    const highlandBlend = smoothstep(clamp((elevationAboveWater - 20) / 18, 0, 1));
+    const shelfBlend = meadowFlatness * cliffSuppression * highlandBlend;
+    const blendedShelfTopY = Math.round(lerp(topY, shelfTargetTopY, Math.min(0.82, shelfBlend)));
+    topY = clamp(blendedShelfTopY, topY - 3, topY + 6);
+    elevationAboveWater = topY - waterLevel;
+    landformType = getLandformType(baseTerrainMetrics, elevationAboveWater, localRelief);
+  }
   const mountainCliffSurfaceStateId = !oceanColumn.active &&
     !lakeColumn.active &&
     !riverColumn.active &&
@@ -492,6 +589,18 @@ function getColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ) {
           : biomes.meadow.createProfile(worldOptions)
     )
     : null;
+  const foothillBiomeProfile = !oceanColumn.active &&
+    !lakeColumn.active &&
+    !riverColumn.active &&
+    !shoreBiomeProfile &&
+    !mountainBiomeProfile &&
+    foothillBiomeKey
+    ? (
+      foothillBiomeKey === 'windswept_forest'
+        ? biomes.windsweptForest.createProfile(worldOptions)
+        : biomes.windsweptHills.createProfile(worldOptions)
+    )
+    : null;
   const oceanTemperatureNoise = oceanColumn.active
     ? getTemperatureNoise(worldX, worldZ, worldOptions.seedHash + 7701)
     : 0;
@@ -518,7 +627,9 @@ function getColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ) {
         ? shoreBiomeProfile
         : mountainBiomeProfile
           ? mountainBiomeProfile
-          : landBiomeProfile;
+          : foothillBiomeProfile
+            ? foothillBiomeProfile
+          : adjustedLandBiomeProfile;
   const soilDepth = Math.max(3, Math.floor(worldOptions.terrainThickness / 3));
   const steepBankSurfaceStateId = shouldUseStonyBankSurface(localRelief, elevationAboveWater, baseTerrainMetrics)
     ? getSteepBankSurfaceStateId(worldOptions, worldX, worldZ)
@@ -604,11 +715,51 @@ function getColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ) {
     soilBlockStateId = biomeProfile.soilBlockStateId;
   }
 
+  let mountainDensity = null;
+  if (shouldUseMountainDensitySurface({
+    biomeKey: biomeProfile.biomeKey,
+    localRelief,
+    terrainMetrics: baseTerrainMetrics,
+    waterTopY: oceanColumn.active
+      ? oceanColumn.waterTopY
+      : lakeColumn.active
+        ? lakeColumn.waterTopY
+        : riverColumn.waterTopY ?? null
+  })) {
+    const densityColumn = {
+      baseTerrainMetrics,
+      topY
+    };
+    const densitySettings = getMountainDensitySettings(
+      worldOptions,
+      densityColumn,
+      localRelief,
+      elevationAboveWater,
+      worldX,
+      worldZ
+    );
+    const densityTopY = findMountainDensityTopY(
+      worldOptions,
+      densityColumn,
+      densitySettings,
+      worldX,
+      worldZ
+    );
+
+    topY = densityTopY;
+    elevationAboveWater = topY - waterLevel;
+    mountainDensity = {
+      ...densitySettings
+    };
+  }
+
   return cacheAndReturn({
     baseTerrainMetrics,
     biomeProfile,
     climate: columnClimate,
     floorStartY: topY - (worldOptions.terrainThickness - 1),
+    landformType,
+    mountainDensity,
     soilStartY: Math.max(topY - (soilDepth - 1), topY - 3),
     soilBlockStateId,
     topBlockStateId,
@@ -641,6 +792,65 @@ function getSurfaceVariation(worldOptions, surfaceY, spawn, centerX, centerZ, ra
   return maxTopY - minTopY;
 }
 
+function getHighlandShelfTopY(worldOptions, surfaceY, worldX, worldZ, terrainAmplitude, radius = 3) {
+  const heights = [];
+
+  for (let sampleX = worldX - radius; sampleX <= worldX + radius; sampleX++) {
+    for (let sampleZ = worldZ - radius; sampleZ <= worldZ + radius; sampleZ++) {
+      heights.push(
+        getTerrainHeight(
+          sampleX,
+          sampleZ,
+          surfaceY,
+          terrainAmplitude,
+          worldOptions.seedHash,
+          worldOptions.maxWorldY
+        )
+      );
+    }
+  }
+
+  heights.sort((left, right) => left - right);
+
+  const upperStartIndex = Math.floor(heights.length * 0.6);
+  const middleStartIndex = Math.floor(heights.length * 0.3);
+  const middleEndIndex = Math.floor(heights.length * 0.7);
+  const upperHeights = heights.slice(upperStartIndex);
+  const middleHeights = heights.slice(middleStartIndex, middleEndIndex);
+  const upperAverage = upperHeights.reduce((sum, height) => sum + height, 0) / Math.max(1, upperHeights.length);
+  const middleAverage = middleHeights.reduce((sum, height) => sum + height, 0) / Math.max(1, middleHeights.length);
+
+  return Math.round((upperAverage * 0.68) + (middleAverage * 0.32));
+}
+
+function getFoothillBlendTopY(worldOptions, surfaceY, worldX, worldZ, terrainAmplitude, radius = 2) {
+  const heights = [];
+
+  for (let sampleX = worldX - radius; sampleX <= worldX + radius; sampleX++) {
+    for (let sampleZ = worldZ - radius; sampleZ <= worldZ + radius; sampleZ++) {
+      heights.push(
+        getTerrainHeight(
+          sampleX,
+          sampleZ,
+          surfaceY,
+          terrainAmplitude,
+          worldOptions.seedHash,
+          worldOptions.maxWorldY
+        )
+      );
+    }
+  }
+
+  const averageHeight = heights.reduce((sum, height) => sum + height, 0) / Math.max(1, heights.length);
+  const upperHeights = heights
+    .slice()
+    .sort((left, right) => left - right)
+    .slice(Math.floor(heights.length * 0.55));
+  const upperAverage = upperHeights.reduce((sum, height) => sum + height, 0) / Math.max(1, upperHeights.length);
+
+  return Math.round((averageHeight * 0.78) + (upperAverage * 0.22));
+}
+
 function getColumnDebugData(worldOptions, surfaceY, spawn, worldX, worldZ) {
   const column = getColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ);
   const terrainMetrics = column.baseTerrainMetrics ?? {};
@@ -652,9 +862,11 @@ function getColumnDebugData(worldOptions, surfaceY, spawn, worldX, worldZ) {
     continentalness: terrainMetrics.continentalness ?? 0,
     effectiveTemperature: climate.effectiveTemperature ?? climate.temperature ?? 0,
     erosion: terrainMetrics.erosion ?? 0,
+    foothillness: terrainMetrics.foothillness ?? 0,
     freezeChance: climate.freezeChance ?? 0,
     heightFactor: climate.heightFactor ?? 0,
     inlandness: terrainMetrics.inlandness ?? 0,
+    landformType: column.landformType ?? getLandformType(terrainMetrics, column.topY - surfaceY + 1, 0),
     moisture: climate.moisture ?? 0,
     mountainness: terrainMetrics.mountainness ?? 0,
     ruggedness: terrainMetrics.ruggedness ?? 0,
@@ -956,6 +1168,7 @@ function getSurfaceShapeContext(worldOptions, surfaceY, spawn, worldX, worldZ, c
   }
 
   const biomeKey = column.biomeProfile?.biomeKey;
+  const landformType = column.landformType ?? LANDFORM_TYPES.INTERIOR_LOWLANDS;
   if (
     biomeKey === 'beach' ||
     biomeKey === 'stony_shore' ||
@@ -967,6 +1180,13 @@ function getSurfaceShapeContext(worldOptions, surfaceY, spawn, worldX, worldZ, c
     biomeKey === 'lukewarm_ocean' ||
     biomeKey === 'cold_ocean' ||
     biomeKey === 'frozen_ocean'
+  ) {
+    return null;
+  }
+
+  if (
+    landformType === LANDFORM_TYPES.COASTAL_LOWLANDS ||
+    landformType === LANDFORM_TYPES.INTERIOR_LOWLANDS
   ) {
     return null;
   }
@@ -1056,6 +1276,25 @@ function getSurfaceShapeContext(worldOptions, surfaceY, spawn, worldX, worldZ, c
     return null;
   }
 
+  if (
+    landformType === LANDFORM_TYPES.ROLLING_UPLANDS &&
+    (
+      biomeKey === 'plains' ||
+      biomeKey === 'sunflower_plains' ||
+      biomeKey === 'forest' ||
+      biomeKey === 'flower_forest' ||
+      biomeKey === 'birch_forest' ||
+      biomeKey === 'old_growth_birch_forest' ||
+      biomeKey === 'taiga' ||
+      biomeKey === 'snowy_taiga' ||
+      biomeKey === 'swamp' ||
+      biomeKey === 'snowy_plains'
+    ) &&
+    (terrainShapeFactor < 0.84 || maxDrop < 12 || exposureFactor < 0.42)
+  ) {
+    return null;
+  }
+
   if (maxDrop < 5 && terrainShapeFactor < 0.5) {
     return null;
   }
@@ -1124,6 +1363,277 @@ function shouldCarveSurfaceShape(worldOptions, column, shapeContext, worldX, wor
     (depthMask * 0.12);
 
   return cavitySignal > threshold;
+}
+
+function getChunkTopSolidY(chunk, localX, localZ) {
+  for (let y = chunk.minY + chunk.worldHeight - 1; y >= chunk.minY; y--) {
+    if (chunk.getBlockStateId(new Vec3(localX, y, localZ)) !== 0) {
+      return y;
+    }
+  }
+
+  return null;
+}
+
+function shouldUseMountainDensitySurface({
+  biomeKey,
+  localRelief,
+  terrainMetrics,
+  waterTopY
+}) {
+  if (!terrainMetrics || waterTopY !== null) {
+    return false;
+  }
+
+  if (
+    biomeKey === 'beach' ||
+    biomeKey === 'stony_shore' ||
+    biomeKey === 'desert' ||
+    biomeKey === 'lake' ||
+    biomeKey === 'river' ||
+    biomeKey === 'ocean' ||
+    biomeKey === 'warm_ocean' ||
+    biomeKey === 'lukewarm_ocean' ||
+    biomeKey === 'cold_ocean' ||
+    biomeKey === 'frozen_ocean'
+  ) {
+    return false;
+  }
+
+  const peakBiome = (
+    biomeKey === 'jagged_peaks' ||
+    biomeKey === 'stony_peaks'
+  );
+
+  return (
+    (
+      peakBiome ||
+      (
+        terrainMetrics.mountainness >= 0.6 &&
+        localRelief >= 10 &&
+        (
+          terrainMetrics.cliffiness >= 0.24 ||
+          terrainMetrics.ruggedness >= 0.6
+        )
+      )
+    ) &&
+    localRelief >= 7
+  );
+}
+
+function getMountainDensitySettings(worldOptions, column, localRelief, elevationAboveWater, worldX, worldZ) {
+  const terrainMetrics = column.baseTerrainMetrics;
+  const mountainFactor = smoothstep(clamp((terrainMetrics.mountainness - 0.34) / 0.52, 0, 1));
+  const cliffFactor = smoothstep(clamp((terrainMetrics.cliffiness - 0.18) / 0.48, 0, 1));
+  const ruggedFactor = smoothstep(clamp((terrainMetrics.ruggedness - 0.42) / 0.4, 0, 1));
+  const reliefFactor = smoothstep(clamp((localRelief - 6) / 18, 0, 1));
+  const elevationFactor = smoothstep(clamp((elevationAboveWater - 10) / 36, 0, 1));
+  const densityStrength = clamp(
+    Math.max(
+      smoothstep(clamp((terrainMetrics.mountainness - 0.48) / 0.28, 0, 1)) *
+      smoothstep(clamp((localRelief - 8) / 16, 0, 1)),
+      smoothstep(clamp((terrainMetrics.mountainness - 0.74) / 0.14, 0, 1))
+    ),
+    0,
+    1
+  );
+  const massifNoise = fbmNoise3d(worldX, column.topY * 0.08, worldZ, worldOptions.seedHash + 9391, {
+    frequency: 0.0068,
+    octaves: 2,
+    persistence: 0.55,
+    lacunarity: 2
+  });
+  const spireNoise = fbmNoise3d(worldX * 0.84, column.topY * 0.22, worldZ * 0.84, worldOptions.seedHash + 9419, {
+    frequency: 0.013,
+    octaves: 3,
+    persistence: 0.56,
+    lacunarity: 2.08
+  });
+  const saddleNoise = fbmNoise3d(worldX, column.topY * 0.04, worldZ, worldOptions.seedHash + 9461, {
+    frequency: 0.0105,
+    octaves: 2,
+    persistence: 0.54,
+    lacunarity: 2
+  });
+  const targetShellDepth = Math.min(
+    36,
+    Math.max(
+      14,
+      Math.floor(10 + (mountainFactor * 9) + (cliffFactor * 6) + (reliefFactor * 5) + (ruggedFactor * 4))
+    )
+  );
+  const shellDepth = Math.round(lerp(8, targetShellDepth, densityStrength));
+  const targetRoofRise = Math.min(
+    22,
+    Math.max(
+      5,
+      Math.floor(4 + (mountainFactor * 8) + (cliffFactor * 5) + (reliefFactor * 3) + (elevationFactor * 2))
+    )
+  );
+  const roofRise = Math.round(lerp(2, targetRoofRise, densityStrength));
+  const massifLift = Math.round(massifNoise * (2 + (reliefFactor * 4) + (mountainFactor * 3)) * densityStrength);
+  const spireLift = Math.round(
+    Math.max(0, spireNoise - 0.08) *
+    (7 + (mountainFactor * 7) + (cliffFactor * 4)) *
+    densityStrength
+  );
+  const saddleCut = Math.round(
+    Math.max(0, -saddleNoise - 0.06) *
+    (3 + (reliefFactor * 4)) *
+    densityStrength
+  );
+  const roofY = Math.min(
+    worldOptions.maxWorldY - 1,
+    Math.max(
+      column.topY + 2,
+      column.topY + roofRise + massifLift + spireLift - saddleCut
+    )
+  );
+
+  return {
+    cliffFactor,
+    elevationFactor,
+    massifNoise,
+    mountainFactor,
+    reliefFactor,
+    ruggedFactor,
+    roofY,
+    shellBaseY: Math.max(
+      worldOptions.minWorldY + BEDROCK_MAX_THICKNESS + 2,
+      column.topY - shellDepth - Math.max(0, massifLift)
+    ),
+    densityStrength,
+    spireFactor: smoothstep(clamp((spireNoise - 0.02) / 0.5, 0, 1))
+  };
+}
+
+function isMountainDensitySolid(worldOptions, column, settings, worldX, worldY, worldZ) {
+  if (worldY < settings.shellBaseY) {
+    return true;
+  }
+
+  if (worldY > settings.roofY) {
+    return false;
+  }
+
+  const shellHeight = Math.max(1, settings.roofY - settings.shellBaseY);
+  const normalizedHeight = clamp((worldY - settings.shellBaseY) / shellHeight, 0, 1);
+  const warpX = worldX + (fbmNoise3d(worldX, worldY * 0.31, worldZ, worldOptions.seedHash + 9203, {
+    frequency: 0.019,
+    octaves: 2,
+    persistence: 0.56,
+    lacunarity: 2
+  }) * (4 + (settings.cliffFactor * 5)));
+  const warpZ = worldZ + (fbmNoise3d(worldX, worldY * 0.29, worldZ, worldOptions.seedHash + 9221, {
+    frequency: 0.019,
+    octaves: 2,
+    persistence: 0.56,
+    lacunarity: 2
+  }) * (4 + (settings.cliffFactor * 5)));
+  const macroNoise = (fbmNoise3d(warpX * 0.9, worldY * 0.58, warpZ * 0.9, worldOptions.seedHash + 9239, {
+    frequency: 0.015,
+    octaves: 3,
+    persistence: 0.56,
+    lacunarity: 2.08
+  }) + 1) * 0.5;
+  const detailNoise = (fbmNoise3d(warpX, worldY * 1.08, warpZ, worldOptions.seedHash + 9281, {
+    frequency: 0.037,
+    octaves: 2,
+    persistence: 0.58,
+    lacunarity: 2.18
+  }) + 1) * 0.5;
+  const ridgeNoise = 1 - Math.abs(fbmNoise3d(
+    (warpX * 0.64) + (worldY * 0.14),
+    worldY * 0.88,
+    (warpZ * 0.64) - (worldY * 0.12),
+    worldOptions.seedHash + 9317,
+    {
+      frequency: 0.022,
+      octaves: 3,
+      persistence: 0.54,
+      lacunarity: 2.04
+    }
+  ));
+  const shelfNoise = (fbmNoise3d(
+    (warpX * 0.72) - (worldY * 0.08),
+    worldY * 1.22,
+    (warpZ * 0.72) + (worldY * 0.11),
+    worldOptions.seedHash + 9349,
+    {
+      frequency: 0.029,
+      octaves: 2,
+      persistence: 0.55,
+      lacunarity: 2
+    }
+  ) + 1) * 0.5;
+  const spireNoise = Math.max(0, fbmNoise3d(warpX * 0.8, worldY * 0.96, warpZ * 0.8, worldOptions.seedHash + 9373, {
+    frequency: 0.024,
+    octaves: 2,
+    persistence: 0.56,
+    lacunarity: 2.12
+  }));
+  const densitySignal =
+    (macroNoise * 0.34) +
+    (detailNoise * 0.16) +
+    (ridgeNoise * 0.28) +
+    (shelfNoise * 0.14) +
+    (spireNoise * 0.08);
+  const support = (1 - normalizedHeight) *
+    (1 + (settings.mountainFactor * 0.22) + (settings.ruggedFactor * 0.16) + (settings.reliefFactor * 0.1));
+  const overhangAllowance = (settings.reliefFactor * 0.08) + (settings.cliffFactor * 0.06) + (settings.spireFactor * 0.04);
+  const threshold = 0.8 +
+    (normalizedHeight * 0.34) -
+    (settings.cliffFactor * 0.08) -
+    (settings.elevationFactor * 0.04) -
+    (settings.spireFactor * 0.06) -
+    overhangAllowance;
+
+  return (support + densitySignal) > threshold;
+}
+
+function findMountainDensityTopY(worldOptions, column, settings, worldX, worldZ) {
+  for (let y = settings.roofY; y >= settings.shellBaseY; y--) {
+    if (!isMountainDensitySolid(worldOptions, column, settings, worldX, y, worldZ)) {
+      continue;
+    }
+
+    if (
+      y <= settings.shellBaseY + 1 ||
+      isMountainDensitySolid(worldOptions, column, settings, worldX, y - 1, worldZ)
+    ) {
+      return y;
+    }
+  }
+
+  return column.topY;
+}
+
+function paintMountainSurfaceColumn(chunk, localX, localZ, topBlockStateId, soilBlockStateId, soilLayerCount) {
+  const topSolidY = getChunkTopSolidY(chunk, localX, localZ);
+
+  if (topSolidY === null) {
+    return null;
+  }
+
+  let paintedLayers = 0;
+
+  for (let y = topSolidY; y >= chunk.minY && paintedLayers < soilLayerCount; y--) {
+    const position = new Vec3(localX, y, localZ);
+
+    if (chunk.getBlockStateId(position) === 0) {
+      continue;
+    }
+
+    chunk.setBlockStateId(
+      position,
+      paintedLayers === 0
+        ? topBlockStateId
+        : soilBlockStateId
+    );
+    paintedLayers += 1;
+  }
+
+  return topSolidY;
 }
 
 function getCaveSignal(worldOptions, worldX, worldY, worldZ) {
@@ -1250,47 +1760,86 @@ function shouldPlaceWaterSpring(worldOptions, surfaceY, spawn, worldX, y, worldZ
 }
 
 function createGeneratedChunk(worldOptions, surfaceY, spawn, chunkX, chunkZ) {
-  const chunk = new Chunk();
+  const chunk = createChunk(worldOptions);
   const populationFeatures = collectPopulationFeaturesForChunk(worldOptions, surfaceY, spawn, chunkX, chunkZ);
+  const chunkTopY = chunk.minY + chunk.worldHeight - 1;
 
   for (let localX = 0; localX < 16; localX++) {
     for (let localZ = 0; localZ < 16; localZ++) {
       const worldX = (chunkX * 16) + localX;
       const worldZ = (chunkZ * 16) + localZ;
       const column = getColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ);
-      const { biomeProfile, soilBlockStateId, soilStartY, topBlockStateId, topY } = column;
+      const { biomeProfile, mountainDensity, soilBlockStateId, soilStartY, topBlockStateId, topY } = column;
       const surfaceShapeContext = getSurfaceShapeContext(worldOptions, surfaceY, spawn, worldX, worldZ, column);
+      const surfaceSoilThickness = Math.max(1, topY - soilStartY + 1);
+      let actualTopY = topY;
 
-      for (let y = chunk.minY; y < topY; y++) {
-        const bedrockStateId = resolveBedrockStateId(worldOptions, worldX, y, worldZ);
+      if (mountainDensity) {
+        for (let y = chunk.minY; y <= Math.min(chunkTopY, mountainDensity.roofY); y++) {
+          const bedrockStateId = resolveBedrockStateId(worldOptions, worldX, y, worldZ);
 
-        if (bedrockStateId !== null) {
-          chunk.setBlockStateId(new Vec3(localX, y, localZ), bedrockStateId);
-          continue;
+          if (bedrockStateId !== null) {
+            chunk.setBlockStateId(new Vec3(localX, y, localZ), bedrockStateId);
+            continue;
+          }
+
+          if (
+            !isBelowPondFootprint(worldX, y, worldZ, populationFeatures.ponds) &&
+            shouldCarveCave(worldOptions, spawn, column, worldX, y, worldZ)
+          ) {
+            continue;
+          }
+
+          if (!isMountainDensitySolid(worldOptions, column, mountainDensity, worldX, y, worldZ)) {
+            continue;
+          }
+
+          chunk.setBlockStateId(
+            new Vec3(localX, y, localZ),
+            resolveUndergroundBlockStateId(worldOptions, biomeProfile, worldX, y, worldZ, topY)
+          );
         }
 
-        if (shouldCarveSurfaceShape(worldOptions, column, surfaceShapeContext, worldX, y, worldZ)) {
-          continue;
+        actualTopY = paintMountainSurfaceColumn(
+          chunk,
+          localX,
+          localZ,
+          topBlockStateId,
+          soilBlockStateId,
+          surfaceSoilThickness
+        ) ?? topY;
+      } else {
+        for (let y = chunk.minY; y < topY; y++) {
+          const bedrockStateId = resolveBedrockStateId(worldOptions, worldX, y, worldZ);
+
+          if (bedrockStateId !== null) {
+            chunk.setBlockStateId(new Vec3(localX, y, localZ), bedrockStateId);
+            continue;
+          }
+
+          if (shouldCarveSurfaceShape(worldOptions, column, surfaceShapeContext, worldX, y, worldZ)) {
+            continue;
+          }
+
+          if (
+            !isBelowPondFootprint(worldX, y, worldZ, populationFeatures.ponds) &&
+            shouldCarveCave(worldOptions, spawn, column, worldX, y, worldZ)
+          ) {
+            continue;
+          }
+
+          chunk.setBlockStateId(
+            new Vec3(localX, y, localZ),
+            y >= soilStartY
+              ? soilBlockStateId
+              : resolveUndergroundBlockStateId(worldOptions, biomeProfile, worldX, y, worldZ, topY)
+          );
         }
 
-        if (
-          !isBelowPondFootprint(worldX, y, worldZ, populationFeatures.ponds) &&
-          shouldCarveCave(worldOptions, spawn, column, worldX, y, worldZ)
-        ) {
-          continue;
-        }
-
-        chunk.setBlockStateId(
-          new Vec3(localX, y, localZ),
-          y >= soilStartY
-            ? soilBlockStateId
-            : resolveUndergroundBlockStateId(worldOptions, biomeProfile, worldX, y, worldZ, topY)
-        );
+        chunk.setBlockStateId(new Vec3(localX, topY, localZ), topBlockStateId);
       }
 
-      chunk.setBlockStateId(new Vec3(localX, topY, localZ), topBlockStateId);
-
-      for (let y = topY - 4; y <= topY - 1; y++) {
+      for (let y = actualTopY - 4; y <= actualTopY - 1; y++) {
         if (y >= chunk.minY && shouldPlaceWaterSpring(worldOptions, surfaceY, spawn, worldX, y, worldZ)) {
           chunk.setBlockStateId(new Vec3(localX, y, localZ), worldOptions.terrainBlockStateIds.water);
         }
@@ -1298,7 +1847,7 @@ function createGeneratedChunk(worldOptions, surfaceY, spawn, chunkX, chunkZ) {
 
       if (column.waterTopY !== null) {
         const isFreezing = biomeProfile.metadata && biomeProfile.metadata.temperature <= 0.15;
-        for (let y = column.waterBottomY ?? (topY + 1); y <= column.waterTopY; y++) {
+        for (let y = column.waterBottomY ?? (actualTopY + 1); y <= column.waterTopY; y++) {
           if (isFreezing && y === column.waterTopY) {
             chunk.setBlockStateId(new Vec3(localX, y, localZ), worldOptions.terrainBlockStateIds.ice);
           } else {
@@ -1307,9 +1856,6 @@ function createGeneratedChunk(worldOptions, surfaceY, spawn, chunkX, chunkZ) {
         }
       }
 
-      for (let y = chunk.minY; y < chunk.minY + chunk.worldHeight; y++) {
-        chunk.setSkyLight(new Vec3(localX, y, localZ), 15);
-      }
     }
   }
 
@@ -1335,6 +1881,7 @@ function createGeneratedChunk(worldOptions, surfaceY, spawn, chunkX, chunkZ) {
   }
 
   applySurfaceDecorationsToChunk(chunk, chunkX, chunkZ, worldOptions, surfaceY, spawn);
+  bakeChunkLighting(chunk, worldOptions);
 
   return chunk;
 }
@@ -1342,6 +1889,7 @@ function createGeneratedChunk(worldOptions, surfaceY, spawn, chunkX, chunkZ) {
 module.exports = {
   createGeneratedChunk,
   getColumnDebugData,
+  getConfiguredSurfaceY,
   getSpawnChunk,
   getSurfaceY,
   resolveWorldOptions

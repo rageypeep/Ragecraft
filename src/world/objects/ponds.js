@@ -178,18 +178,30 @@ function reinforcePondFloor(chunk, localX, localZ, floorY, supportStateId) {
   }
 }
 
-function sealPondEnvelope(chunk, chunkX, chunkZ, pond, supportStateId) {
+function isWithinChunk(worldX, worldZ, chunkX, chunkZ) {
+  return (
+    worldX >= chunkX * 16 &&
+    worldX < ((chunkX + 1) * 16) &&
+    worldZ >= chunkZ * 16 &&
+    worldZ < ((chunkZ + 1) * 16)
+  );
+}
+
+function getChunkStateId(chunk, chunkX, chunkZ, worldX, worldY, worldZ) {
+  if (!isWithinChunk(worldX, worldZ, chunkX, chunkZ) || worldY < chunk.minY || worldY >= chunk.minY + chunk.worldHeight) {
+    return null;
+  }
+
+  return chunk.getBlockStateId(new Vec3(worldX - (chunkX * 16), worldY, worldZ - (chunkZ * 16)));
+}
+
+function sealPondEdges(chunk, chunkX, chunkZ, pond, supportStateId, waterStateId) {
   const sealRadius = pond.radius + POND_SHORE_WIDTH + 1;
-  const minSealY = pond.waterLevel - POND_MIN_FLOOR_THICKNESS;
+  const minSealY = pond.waterLevel - Math.max(pond.depth + 3, 5);
 
   for (let worldX = pond.centerX - sealRadius; worldX <= pond.centerX + sealRadius; worldX++) {
     for (let worldZ = pond.centerZ - sealRadius; worldZ <= pond.centerZ + sealRadius; worldZ++) {
-      if (
-        worldX < chunkX * 16 ||
-        worldX >= ((chunkX + 1) * 16) ||
-        worldZ < chunkZ * 16 ||
-        worldZ >= ((chunkZ + 1) * 16)
-      ) {
+      if (!isWithinChunk(worldX, worldZ, chunkX, chunkZ)) {
         continue;
       }
 
@@ -212,7 +224,18 @@ function sealPondEnvelope(chunk, chunkX, chunkZ, pond, supportStateId) {
         const position = new Vec3(localX, y, localZ);
         const stateId = chunk.getBlockStateId(position);
 
-        if (stateId === 0) {
+        if (stateId !== 0) {
+          continue;
+        }
+
+        const adjacentToWater =
+          getChunkStateId(chunk, chunkX, chunkZ, worldX + 1, y, worldZ) === waterStateId ||
+          getChunkStateId(chunk, chunkX, chunkZ, worldX - 1, y, worldZ) === waterStateId ||
+          getChunkStateId(chunk, chunkX, chunkZ, worldX, y, worldZ + 1) === waterStateId ||
+          getChunkStateId(chunk, chunkX, chunkZ, worldX, y, worldZ - 1) === waterStateId ||
+          getChunkStateId(chunk, chunkX, chunkZ, worldX, y + 1, worldZ) === waterStateId;
+
+        if (adjacentToWater) {
           chunk.setBlockStateId(position, supportStateId);
         }
       }
@@ -274,7 +297,14 @@ function applyPondToChunk({ chunk, chunkX, chunkZ, pond, worldOptions, getTopSol
     }
   }
 
-  sealPondEnvelope(chunk, chunkX, chunkZ, pond, worldOptions.foundationBlockStateId);
+  sealPondEdges(
+    chunk,
+    chunkX,
+    chunkZ,
+    pond,
+    worldOptions.foundationBlockStateId,
+    worldOptions.terrainBlockStateIds.water
+  );
 }
 
 function isBelowPondFootprint(worldX, worldY, worldZ, ponds = []) {

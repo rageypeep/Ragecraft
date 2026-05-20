@@ -459,7 +459,8 @@ function getCoastProximityBlend(worldOptions, surfaceY, spawn, worldX, worldZ) {
       sampleZ,
       surfaceY,
       worldOptions.terrainAmplitude + sampleLandOffset,
-      worldOptions.seedHash
+      worldOptions.seedHash,
+      worldOptions.maxWorldY
     );
     const sampleTopY = getSpawnSafeTopY(
       worldOptions,
@@ -518,7 +519,8 @@ function getNearshoreLandBlend(worldOptions, surfaceY, spawn, worldX, worldZ) {
       sampleZ,
       surfaceY,
       worldOptions.terrainAmplitude + sampleLandOffset,
-      worldOptions.seedHash
+      worldOptions.seedHash,
+      worldOptions.maxWorldY
     );
     const sampleTopY = getSpawnSafeTopY(
       worldOptions,

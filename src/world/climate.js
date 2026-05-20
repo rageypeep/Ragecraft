@@ -9,15 +9,10 @@ const { getTerrainMetrics } = require('./terrain');
 
 const LAND_CLIMATE_SELECTION_CACHE = new Map();
 const COLUMN_CLIMATE_CACHE = new Map();
-
-function getBiomeRegionNoise(worldX, worldZ, seedOffset = 0) {
-  return fbmNoise2d(worldX, worldZ, seedOffset + 907, {
-    frequency: 0.0055,
-    octaves: 4,
-    persistence: 0.58,
-    lacunarity: 2
-  }) - 0.12;
-}
+const BIOME_REGION_CACHE = new Map();
+const BIOME_REGION_CELL_SIZE = 640;
+const BIOME_REGION_WARP_FREQUENCY = 0.00082;
+const BIOME_REGION_WARP_STRENGTH = 224;
 
 function getSunflowerPlainsNoise(worldX, worldZ, seedOffset = 0) {
   return valueNoise2d(worldX, worldZ, seedOffset + 983, 0.0065);
@@ -352,7 +347,8 @@ function getLandClimateSample(worldOptions, worldX, worldZ) {
     worldZ,
     64,
     worldOptions.terrainAmplitude,
-    worldOptions.seedHash
+    worldOptions.seedHash,
+    worldOptions.maxWorldY
   );
   const macroTemperature = getMacroTemperatureNoise(worldX, worldZ, worldOptions.seedHash);
   const macroMoisture = getMacroMoistureNoise(worldX, worldZ, worldOptions.seedHash);
@@ -368,9 +364,9 @@ function getLandClimateSample(worldOptions, worldX, worldZ) {
     macroMoisture,
     macroTemperature,
     macroWeirdness,
-    moisture: (macroMoisture * 0.81) + (localMoisture * 0.19),
-    temperature: (macroTemperature * 0.83) + (localTemperature * 0.17),
-    weirdness: (macroWeirdness * 0.74) + (localWeirdness * 0.26),
+    moisture: (macroMoisture * 0.88) + (localMoisture * 0.12),
+    temperature: (macroTemperature * 0.9) + (localTemperature * 0.1),
+    weirdness: (macroWeirdness * 0.82) + (localWeirdness * 0.18),
     ruggedness: terrainMetrics.ruggedness
   };
 }
@@ -597,29 +593,8 @@ function getClimateBiomeWeights(climate) {
   };
 }
 
-function getLandClimateSelection(worldOptions, worldX, worldZ) {
-  if (!worldOptions.mixedBiomes) {
-    const profile = getForcedBiomeProfile(worldOptions);
-    const climate = getLandClimateSample(worldOptions, worldX, worldZ);
-    return {
-      blendedTerrainAmplitudeOffset: profile.terrainAmplitudeOffset,
-      climate,
-      primaryProfile: profile,
-      weights: null
-    };
-  }
-
-  const cacheKey = `${worldOptions.seedHash}:${worldX},${worldZ}`;
-
-  if (LAND_CLIMATE_SELECTION_CACHE.has(cacheKey)) {
-    return LAND_CLIMATE_SELECTION_CACHE.get(cacheKey);
-  }
-
-  const climate = getLandClimateSample(worldOptions, worldX, worldZ);
-  const unconstrainedWeights = getClimateBiomeWeights(climate);
-  const regionFamily = getBiomeRegionFamily(climate, worldX, worldZ, worldOptions.seedHash);
-  const weights = applyRegionConstraints(unconstrainedWeights, regionFamily);
-  const profiles = {
+function getLandBiomeProfiles(worldOptions) {
+  return {
     birchForest: biomes.birchForest.createProfile(worldOptions),
     flowerForest: biomes.flowerForest.createProfile(worldOptions),
     forest: {
@@ -650,21 +625,261 @@ function getLandClimateSelection(worldOptions, worldX, worldZ) {
     windsweptForest: biomes.windsweptForest.createProfile(worldOptions),
     windsweptHills: biomes.windsweptHills.createProfile(worldOptions)
   };
+}
+
+function collapseSpecialBiomeWeights(weights) {
+  const collapsed = { ...weights };
+  collapsed.plains += collapsed.sunflowerPlains ?? 0;
+  collapsed.forest += collapsed.flowerForest ?? 0;
+  collapsed.birchForest += collapsed.oldGrowthBirchForest ?? 0;
+  collapsed.sunflowerPlains = 0.001;
+  collapsed.flowerForest = 0.001;
+  collapsed.oldGrowthBirchForest = 0.001;
+  return collapsed;
+}
+
+function getTotalWeight(weights) {
+  return Object.values(weights).reduce((sum, weight) => sum + weight, 0);
+}
+
+function normalizeBiomeWeights(weights) {
+  const totalWeight = getTotalWeight(weights);
+
+  if (totalWeight <= 0) {
+    const keys = Object.keys(weights);
+    const fallbackWeight = keys.length > 0 ? 1 / keys.length : 0;
+    return Object.fromEntries(keys.map((key) => [key, fallbackWeight]));
+  }
+
+  return Object.fromEntries(
+    Object.entries(weights).map(([biomeKey, weight]) => [biomeKey, weight / totalWeight])
+  );
+}
+
+function getPrimaryBiomeKey(weights, fallbackKey = 'plains') {
+  return Object.entries(weights).reduce(
+    (bestKey, [biomeKey, weight]) => (weight > (weights[bestKey] ?? Number.NEGATIVE_INFINITY) ? biomeKey : bestKey),
+    fallbackKey
+  );
+}
+
+function getSecondaryBiomeKey(weights, primaryBiomeKey) {
+  let secondaryBiomeKey = primaryBiomeKey;
+  let secondaryWeight = Number.NEGATIVE_INFINITY;
+
+  for (const [biomeKey, weight] of Object.entries(weights)) {
+    if (biomeKey === primaryBiomeKey) {
+      continue;
+    }
+
+    if (weight > secondaryWeight) {
+      secondaryBiomeKey = biomeKey;
+      secondaryWeight = weight;
+    }
+  }
+
+  return secondaryBiomeKey;
+}
+
+function getBiomeRegionCell(worldOptions, cellX, cellZ) {
+  const cacheKey = `${worldOptions.seedHash}:${cellX},${cellZ}`;
+
+  if (BIOME_REGION_CACHE.has(cacheKey)) {
+    return BIOME_REGION_CACHE.get(cacheKey);
+  }
+
+  const centerX = ((cellX + 0.5) * BIOME_REGION_CELL_SIZE) + (
+    ((valueNoise2d(cellX, cellZ, worldOptions.seedHash + 3511, 1) * 2) - 1) *
+    (BIOME_REGION_CELL_SIZE * 0.34)
+  );
+  const centerZ = ((cellZ + 0.5) * BIOME_REGION_CELL_SIZE) + (
+    ((valueNoise2d(cellX, cellZ, worldOptions.seedHash + 3547, 1) * 2) - 1) *
+    (BIOME_REGION_CELL_SIZE * 0.34)
+  );
+  const climate = getLandClimateSample(worldOptions, centerX, centerZ);
+  const regionFamily = getBiomeRegionFamily(climate, centerX, centerZ, worldOptions.seedHash);
+  const weights = normalizeBiomeWeights(
+    applyRegionConstraints(
+      collapseSpecialBiomeWeights(getClimateBiomeWeights(climate)),
+      regionFamily
+    )
+  );
+  const primaryBiomeKey = getPrimaryBiomeKey(weights);
+  const secondaryBiomeKey = getSecondaryBiomeKey(weights, primaryBiomeKey);
+  const cell = {
+    centerX,
+    centerZ,
+    climate,
+    primaryBiomeKey,
+    regionFamily,
+    secondaryBiomeKey,
+    weights
+  };
+
+  if (BIOME_REGION_CACHE.size > 8192) {
+    BIOME_REGION_CACHE.clear();
+  }
+
+  BIOME_REGION_CACHE.set(cacheKey, cell);
+  return cell;
+}
+
+function getBiomeRegionSelection(worldOptions, worldX, worldZ) {
+  const warpedX = worldX + (
+    ((valueNoise2d(worldX, worldZ, worldOptions.seedHash + 3601, BIOME_REGION_WARP_FREQUENCY) * 2) - 1) *
+    BIOME_REGION_WARP_STRENGTH
+  );
+  const warpedZ = worldZ + (
+    ((valueNoise2d(worldX, worldZ, worldOptions.seedHash + 3637, BIOME_REGION_WARP_FREQUENCY) * 2) - 1) *
+    BIOME_REGION_WARP_STRENGTH
+  );
+  const baseCellX = Math.floor(warpedX / BIOME_REGION_CELL_SIZE);
+  const baseCellZ = Math.floor(warpedZ / BIOME_REGION_CELL_SIZE);
+  const candidates = [];
+
+  for (let offsetX = -1; offsetX <= 1; offsetX++) {
+    for (let offsetZ = -1; offsetZ <= 1; offsetZ++) {
+      const cell = getBiomeRegionCell(worldOptions, baseCellX + offsetX, baseCellZ + offsetZ);
+      candidates.push({
+        cell,
+        distance: Math.hypot(warpedX - cell.centerX, warpedZ - cell.centerZ)
+      });
+    }
+  }
+
+  candidates.sort((left, right) => left.distance - right.distance);
+
+  const dominantCell = candidates[0].cell;
+  const secondaryCell = candidates[1]?.cell ?? dominantCell;
+  const dominantDistance = candidates[0].distance;
+  const secondaryDistance = candidates[1]?.distance ?? (dominantDistance + BIOME_REGION_CELL_SIZE);
+  const centerWeight = smoothstep(clamp((secondaryDistance - dominantDistance) / (BIOME_REGION_CELL_SIZE * 0.42), 0, 1));
+  const edgeBlend = 1 - centerWeight;
+  const secondaryInfluence = secondaryCell === dominantCell
+    ? 0
+    : edgeBlend * 0.42;
+  const blendedWeights = {};
+
+  for (const biomeKey of Object.keys(dominantCell.weights)) {
+    blendedWeights[biomeKey] =
+      (dominantCell.weights[biomeKey] * (1 - secondaryInfluence)) +
+      ((secondaryCell.weights[biomeKey] ?? 0) * secondaryInfluence);
+  }
+
+  return {
+    anchorStrength: 0.62 + (centerWeight * 0.22),
+    blendedWeights,
+    centerWeight,
+    dominantCell,
+    edgeBlend,
+    primaryBiomeKey: dominantCell.primaryBiomeKey,
+    regionFamily: dominantCell.regionFamily,
+    secondaryBiomeKey: secondaryCell.primaryBiomeKey
+  };
+}
+
+function applyRegionBiasToWeights(weights, regionSelection) {
+  const totalWeight = getTotalWeight(weights);
+  const anchoredWeights = {};
+
+  for (const [biomeKey, localWeight] of Object.entries(weights)) {
+    const regionWeight = (regionSelection.blendedWeights[biomeKey] ?? 0) * totalWeight;
+    anchoredWeights[biomeKey] =
+      (localWeight * (1 - regionSelection.anchorStrength)) +
+      (regionWeight * regionSelection.anchorStrength);
+  }
+
+  anchoredWeights[regionSelection.primaryBiomeKey] *= 1.18 + (regionSelection.centerWeight * 0.52);
+  anchoredWeights[regionSelection.secondaryBiomeKey] *= 1.04 + (regionSelection.edgeBlend * 0.22);
+  return anchoredWeights;
+}
+
+function resolveSpecialBiomeVariant(worldOptions, biomeKey, climate, worldX, worldZ) {
+  if (
+    biomeKey === 'plains' &&
+    climate.temperature > 0.12 &&
+    climate.moisture > -0.2 &&
+    getSunflowerPlainsNoise(worldX, worldZ, worldOptions.seedHash) > 0.7
+  ) {
+    return 'sunflowerPlains';
+  }
+
+  if (
+    biomeKey === 'forest' &&
+    climate.temperature > -0.04 &&
+    climate.moisture > 0.24 &&
+    getFlowerForestNoise(worldX, worldZ, worldOptions.seedHash) > 0.72
+  ) {
+    return 'flowerForest';
+  }
+
+  if (
+    biomeKey === 'birchForest' &&
+    climate.temperature < 0.16 &&
+    climate.moisture > 0.18 &&
+    climate.inlandness > 0.22 &&
+    getOldGrowthBirchNoise(worldX, worldZ, worldOptions.seedHash) > 0.76
+  ) {
+    return 'oldGrowthBirchForest';
+  }
+
+  if (
+    biomeKey === 'taiga' &&
+    climate.temperature < -0.46 &&
+    climate.moisture > 0.08 &&
+    getTaigaNoise(worldX, worldZ, worldOptions.seedHash) > 0.74
+  ) {
+    return 'snowyTaiga';
+  }
+
+  return biomeKey;
+}
+
+function getLandClimateSelection(worldOptions, worldX, worldZ) {
+  if (!worldOptions.mixedBiomes) {
+    const profile = getForcedBiomeProfile(worldOptions);
+    const climate = getLandClimateSample(worldOptions, worldX, worldZ);
+    return {
+      blendedTerrainAmplitudeOffset: profile.terrainAmplitudeOffset,
+      climate,
+      primaryProfile: profile,
+      weights: null
+    };
+  }
+
+  const cacheKey = `${worldOptions.seedHash}:${worldX},${worldZ}`;
+
+  if (LAND_CLIMATE_SELECTION_CACHE.has(cacheKey)) {
+    return LAND_CLIMATE_SELECTION_CACHE.get(cacheKey);
+  }
+
+  const climate = getLandClimateSample(worldOptions, worldX, worldZ);
+  const unconstrainedWeights = collapseSpecialBiomeWeights(getClimateBiomeWeights(climate));
+  const regionSelection = getBiomeRegionSelection(worldOptions, worldX, worldZ);
+  const weights = applyRegionBiasToWeights(
+    applyRegionConstraints(unconstrainedWeights, regionSelection.regionFamily),
+    regionSelection
+  );
+  const profiles = getLandBiomeProfiles(worldOptions);
   const totalWeight = Object.values(weights).reduce((sum, weight) => sum + weight, 0);
   const blendedTerrainAmplitudeOffset = Object.entries(weights).reduce(
     (sum, [biomeKey, weight]) => sum + (profiles[biomeKey].terrainAmplitudeOffset * weight),
     0
   ) / totalWeight;
-  const primaryBiomeKey = Object.entries(weights).reduce(
-    (bestKey, [biomeKey, weight]) => (weight > weights[bestKey] ? biomeKey : bestKey),
-    'plains'
+  const baseBiomeKey = getPrimaryBiomeKey(weights, 'plains');
+  const primaryBiomeKey = resolveSpecialBiomeVariant(
+    worldOptions,
+    baseBiomeKey,
+    climate,
+    worldX,
+    worldZ
   );
 
   const selection = {
     blendedTerrainAmplitudeOffset,
     climate,
     primaryProfile: profiles[primaryBiomeKey],
-    regionFamily,
+    regionFamily: regionSelection.regionFamily,
     weights
   };
 

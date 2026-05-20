@@ -2,8 +2,9 @@
 
 ## Bugs
 
-- Investigate the underground pond/cave rendering artifact where repeated white "posts" appear under pond floors in generated terrain.
-- Investigate why blocks in that underground pond/cave artifact area can sometimes be broken but not placed back, suggesting a client/server state mismatch or chunk/interaction bounds bug.
+- [x] Investigate the underground pond/cave rendering artifact where repeated white "posts" appear under pond floors in generated terrain.
+- [x] Investigate why blocks in that underground pond/cave artifact area can sometimes be broken but not placed back, suggesting a client/server state mismatch or chunk/interaction bounds bug.
+- [ ] Investigate the persistent striped dark lighting artifact still visible across terrain faces, likely related to chunk-neighbor relight timing or stale edge light state.
 
 ## Next
 
@@ -31,9 +32,24 @@
 - [x] Add basic cliff, ridge, and shoreline shaping so biome borders feel less abrupt.
 - [x] Add chunk-population passes for features that must cross chunk borders cleanly.
 - [x] Add bedrock/foundation rules and proper world bottom shaping.
-- Add a real server-side lighting model instead of the current pragmatic flat-sky path.
-- Add simple mob-safe spawn area rules so new players do not appear inside dense terrain or trees.
-- Add configurable world height/depth ranges instead of one fixed terrain band.
+- [x] Add a real landform pass above raw noise so continents have structural zones instead of only per-column biome picks.
+- [x] Build explicit landform bands:
+  coastal lowlands near sea level
+  interior plains / rolling country
+  uplands
+  foothills
+  mountain cores
+  alpine shelves / basins
+- [x] Route biome choice through landforms so plains, forests, meadows, foothills, and peaks spawn where the larger terrain shape supports them.
+- [x] Keep coastal lowlands broad enough for beaches and stony shores to feel natural instead of squeezed between ocean and uplands.
+- [x] Revisit mountain transitions after the landform pass so foothills and uplands carry more of the climb before peak terrain starts.
+- [x] Rebuild rivers later as real terrain corridors that follow the landform pass, not as an overlay carved on top.
+- [x] Add a real server-side lighting model instead of the current pragmatic flat-sky path.
+- [x] Add dynamic light update packets after block changes so lighting stays correct without relying on full chunk resend behavior.
+- [x] Add emissive / block-light propagation for torches, lava, glowstone, and other light sources instead of skylight-only baking.
+- [x] Add border-aware relighting across neighboring chunks so lighting does not break at chunk edges.
+- [x] Add simple mob-safe spawn area rules so new players do not appear inside dense terrain or trees.
+- [x] Add configurable world height/depth ranges instead of one fixed terrain band.
 
 ## Protocol
 
@@ -44,6 +60,7 @@
 
 ## Server
 
+- [ ] Target the remaining join hitch path, especially synchronous safe-spawn resolution and any chunk-stream warm-up stalls still visible after startup.
 - Add player persistence.
 - Add commands.
 - Add entity tracking.

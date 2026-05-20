@@ -6,10 +6,13 @@ const {
   signedValueNoise2d,
   valueNoise2d
 } = require('./noise');
+const { LANDFORM_TYPES, getLandformType } = require('./landforms');
 
 const SPAWN_TERRAIN_CLEAR_RADIUS = 24;
 const SPAWN_MAJOR_WATER_CLEAR_RADIUS = 56;
 const TERRAIN_HEIGHT_CACHE = new Map();
+const TERRAIN_MAX_TOP_HEADROOM = 8;
+const TERRAIN_SOFT_CEILING_RANGE = 40;
 
 function getContinentalnessNoise(worldX, worldZ, seedOffset = 0) {
   return fbmNoise2d(worldX, worldZ, seedOffset + 1177, {
@@ -42,8 +45,25 @@ function getSpawnMajorWaterBlend(spawn, worldX, worldZ) {
   return getSpawnTerrainBlend(spawn, worldX, worldZ, SPAWN_MAJOR_WATER_CLEAR_RADIUS);
 }
 
-function getTerrainMetrics(worldX, worldZ, surfaceY, amplitude, seedOffset = 0) {
-  const cacheKey = `${worldX},${worldZ},${surfaceY},${amplitude},${seedOffset}`;
+function applyTerrainCeiling(topY, maxTopY) {
+  if (!Number.isFinite(maxTopY)) {
+    return topY;
+  }
+
+  const ceilingTopY = maxTopY - TERRAIN_MAX_TOP_HEADROOM;
+  const softCeilingStartY = ceilingTopY - TERRAIN_SOFT_CEILING_RANGE;
+
+  if (topY <= softCeilingStartY) {
+    return topY;
+  }
+
+  const overflow = topY - softCeilingStartY;
+  const compressedOverflow = overflow / (1 + (overflow / (TERRAIN_SOFT_CEILING_RANGE * 0.9)));
+  return Math.min(ceilingTopY, Math.round(softCeilingStartY + compressedOverflow));
+}
+
+function getTerrainMetrics(worldX, worldZ, surfaceY, amplitude, seedOffset = 0, maxTopY = null) {
+  const cacheKey = `${worldX},${worldZ},${surfaceY},${amplitude},${seedOffset},${maxTopY ?? 'none'}`;
 
   if (TERRAIN_HEIGHT_CACHE.has(cacheKey)) {
     return TERRAIN_HEIGHT_CACHE.get(cacheKey);
@@ -118,25 +138,43 @@ function getTerrainMetrics(worldX, worldZ, surfaceY, amplitude, seedOffset = 0) 
   const continentalFactor = smoothstep(clamp((continentalness + 0.72) / 1.7, 0, 1));
   const inlandness = smoothstep(clamp((continentalness + 0.28) / 1.05, 0, 1));
   const ruggedness = 1 - smoothstep(clamp((erosion + 1) / 2, 0, 1));
+  const coastalRise = smoothstep(clamp((inlandness - 0.02) / 0.24, 0, 1));
+  const coastalPlainFactor = 1 - smoothstep(clamp((inlandness - 0.16) / 0.24, 0, 1));
+  const inlandReliefFreedom = 0.42 + (inlandness * 0.58);
+  const inlandCliffFreedom = 0.28 + (inlandness * 0.72);
   const mountainMask = smoothstep(clamp((inlandness - 0.2) / 0.5, 0, 1)) *
     smoothstep(clamp((ruggedness - 0.14) / 0.5, 0, 1));
-  const mountainRegion = smoothstep(clamp((mountainShape - 0.02) / 0.34, 0, 1)) * mountainMask;
-  const mountainCore = smoothstep(clamp((mountainShape + (mountainRidges * 0.18) - 0.12) / 0.26, 0, 1)) * mountainMask;
-  const highRangeMask = smoothstep(clamp((mountainRegion - 0.42) / 0.42, 0, 1));
-  const continentalLift = ((-(amplitude * 0.5)) + ((amplitude * 5.1) - (-(amplitude * 0.5))) * continentalFactor);
-  const macroRelief = macro * (amplitude * 1.2);
-  const hillRelief = hills * (amplitude * (0.65 + (inlandness * 0.65)));
-  const ridgeBoost = Math.max(0, ridges - (0.46 + (erosion * 0.08))) * (amplitude * (1.3 + (ruggedness * 1.2)));
-  const cliffBoost = Math.max(0, cliffs - 0.68) * (amplitude * (0.95 + (ruggedness * 1.55)));
+  const foothillMask = smoothstep(clamp((mountainShape + 0.24) / 0.72, 0, 1)) *
+    smoothstep(clamp((inlandness - 0.02) / 0.62, 0, 1)) *
+    smoothstep(clamp((ruggedness - 0.04) / 0.62, 0, 1));
+  const mountainRegion = smoothstep(clamp((mountainShape - 0.03) / 0.5, 0, 1)) * mountainMask;
+  const mountainCore = smoothstep(clamp((mountainShape + (mountainRidges * 0.14) - 0.22) / 0.4, 0, 1)) * mountainMask;
+  const mountainTransition = smoothstep(clamp((foothillMask - 0.12) / 0.62, 0, 1));
+  const plateauEscalation = smoothstep(clamp((mountainRegion - 0.3) / 0.56, 0, 1));
+  const coreEscalation = smoothstep(clamp((mountainCore - 0.24) / 0.52, 0, 1));
+  const highRangeMask = smoothstep(clamp((mountainCore - 0.34) / 0.46, 0, 1));
+  const continentalLift = ((-(amplitude * 0.95)) + ((amplitude * 3.9) - (-(amplitude * 0.95))) * Math.pow(continentalFactor, 1.12));
+  const lowlandRise = coastalRise * (amplitude * 0.35);
+  const inlandUplift = smoothstep(clamp((inlandness - 0.26) / 0.42, 0, 1)) * (amplitude * 1.35);
+  const macroRelief = macro * (amplitude * 1.2) * inlandReliefFreedom;
+  const hillRelief = hills * (amplitude * (0.45 + (inlandness * 0.7))) * inlandReliefFreedom;
+  const ridgeBoost = Math.max(0, ridges - (0.46 + (erosion * 0.08))) * (amplitude * (1.15 + (ruggedness * 1.05))) * inlandCliffFreedom;
+  const cliffBoost = Math.max(0, cliffs - 0.68) * (amplitude * (0.8 + (ruggedness * 1.35))) * inlandCliffFreedom;
+  const foothillLift = foothillMask *
+    (amplitude * (3.5 + (inlandness * 3.8) + (ruggedness * 2.4)));
   const mountainPlateauLift = mountainRegion *
-    (amplitude * (5.8 + (inlandness * 3.8) + (ruggedness * 3.2)));
+    (0.18 + (plateauEscalation * 0.82)) *
+    (amplitude * (4.3 + (inlandness * 3.1) + (ruggedness * 2.3)));
   const mountainShoulderLift = mountainCore *
-    (amplitude * (3.2 + (inlandness * 1.6) + (ruggedness * 1.8)));
+    (0.16 + (coreEscalation * 0.84)) *
+    (amplitude * (2.6 + (inlandness * 1.4) + (ruggedness * 1.5)));
   const alpineRelief = Math.max(0, alpineReliefNoise + (mountainRidges * 0.45) - 0.12) *
-    (amplitude * (2.4 + (ruggedness * 2.8) + (mountainCore * 1.4))) *
+    (0.18 + (coreEscalation * 0.82)) *
+    (amplitude * (2.2 + (ruggedness * 2.4) + (mountainCore * 1.2))) *
     mountainCore;
   const peakBoost = Math.max(0, mountainRidges - (0.34 - (ruggedness * 0.06))) *
-    (amplitude * (4.1 + (ruggedness * 4.4) + (inlandness * 1.6))) *
+    (0.14 + (highRangeMask * 0.86)) *
+    (amplitude * (3.6 + (ruggedness * 3.8) + (inlandness * 1.5))) *
     mountainCore;
   const rarePeakMask = Math.pow(smoothstep(clamp((rarePeakNoise - 0.58) / 0.22, 0, 1)), 1.5) * mountainCore;
   const rarePeakBoost = rarePeakMask *
@@ -147,16 +185,20 @@ function getTerrainMetrics(worldX, worldZ, surfaceY, amplitude, seedOffset = 0) 
   const escarpmentBand = Math.max(0, 1 - (Math.abs(escarpmentSignal) / 0.17));
   const cliffFaceBoost = Math.pow(escarpmentBand, 2.35) *
     (amplitude * (1.2 + (ruggedness * 2.8) + (mountainCore * 1.4))) *
-    mountainRegion;
-  const valleyCut = Math.max(0, -valleyMask) * (amplitude * (0.55 + (inlandness * 0.85)));
+    mountainRegion *
+    (0.18 + (plateauEscalation * 0.82));
+  const valleyCut = Math.max(0, -valleyMask) * (amplitude * (0.72 + (coastalPlainFactor * 0.3) + (inlandness * 0.72)));
   const terrainOffset =
     (amplitude * 1.15) +
     continentalLift +
+    lowlandRise +
+    inlandUplift +
     macroRelief +
     hillRelief +
     ridgeBoost +
     cliffBoost -
     valleyCut +
+    foothillLift +
     mountainPlateauLift +
     mountainShoulderLift +
     alpineRelief +
@@ -164,20 +206,29 @@ function getTerrainMetrics(worldX, worldZ, surfaceY, amplitude, seedOffset = 0) 
     rarePeakBoost +
     ultraPeakBoost +
     cliffFaceBoost;
+  const unclampedTopY = waterLevel + Math.round(terrainOffset);
   const terrainMetrics = {
     cliffiness: clamp((cliffBoost + cliffFaceBoost + (peakBoost * 0.28) + (rarePeakBoost * 0.12)) / Math.max(1, amplitude * 12), 0, 1),
     continentalness,
     erosion,
+    foothillness: clamp(
+      (foothillMask * 0.72) +
+      (mountainTransition * 0.22) -
+      (highRangeMask * 0.18),
+      0,
+      1
+    ),
     inlandness,
     mountainness: clamp(
+      (foothillMask * 0.16) +
       (mountainRegion * 0.52) +
       (mountainCore * 0.34) +
-      ((mountainPlateauLift + mountainShoulderLift + peakBoost + rarePeakBoost) / Math.max(1, amplitude * 120)),
+      ((foothillLift + mountainPlateauLift + mountainShoulderLift + peakBoost + rarePeakBoost) / Math.max(1, amplitude * 138)),
       0,
       1
     ),
     ruggedness,
-    topY: waterLevel + Math.round(terrainOffset)
+    topY: applyTerrainCeiling(unclampedTopY, maxTopY)
   };
 
   if (TERRAIN_HEIGHT_CACHE.size > 250000) {
@@ -188,8 +239,8 @@ function getTerrainMetrics(worldX, worldZ, surfaceY, amplitude, seedOffset = 0) 
   return terrainMetrics;
 }
 
-function getTerrainHeight(worldX, worldZ, surfaceY, amplitude, seedOffset = 0) {
-  return getTerrainMetrics(worldX, worldZ, surfaceY, amplitude, seedOffset).topY;
+function getTerrainHeight(worldX, worldZ, surfaceY, amplitude, seedOffset = 0, maxTopY = null) {
+  return getTerrainMetrics(worldX, worldZ, surfaceY, amplitude, seedOffset, maxTopY).topY;
 }
 
 function getSpawnSafeTopY(worldOptions, surfaceY, spawn, worldX, worldZ, baseTopY) {
@@ -216,7 +267,8 @@ function getTerrainRelief(worldOptions, surfaceY, centerX, centerZ, radius = 1) 
         worldZ,
         surfaceY,
         worldOptions.terrainAmplitude,
-        worldOptions.seedHash
+        worldOptions.seedHash,
+        worldOptions.maxWorldY
       );
       minTopY = Math.min(minTopY, topY);
       maxTopY = Math.max(maxTopY, topY);
@@ -226,26 +278,36 @@ function getTerrainRelief(worldOptions, surfaceY, centerX, centerZ, radius = 1) 
   return maxTopY - minTopY;
 }
 
-function getMountainBiomeKey(terrainMetrics, climate, elevationAboveWater) {
+function getMountainBiomeKey(terrainMetrics, climate, elevationAboveWater, localRelief = Number.POSITIVE_INFINITY) {
   if (terrainMetrics.mountainness < 0.38) {
     return null;
   }
 
+  const landformType = getLandformType(terrainMetrics, elevationAboveWater, localRelief);
   const effectiveTemperature = climate?.effectiveTemperature ?? climate?.temperature ?? 0;
   const freezeChance = climate?.freezeChance ?? 0;
   const severeCold = freezeChance > 0.66 || effectiveTemperature < -0.54;
   const coldAlpine = freezeChance > 0.44 || effectiveTemperature < -0.32;
   const temperateAlpine = freezeChance < 0.54 && effectiveTemperature > -0.18;
+  const alpineBench =
+    elevationAboveWater >= 20 &&
+    localRelief <= 14 &&
+    terrainMetrics.cliffiness < 0.28 &&
+    terrainMetrics.ruggedness < 0.66;
   const rockyMountain =
-    terrainMetrics.mountainness >= 0.54 &&
+    terrainMetrics.mountainness >= 0.58 &&
     (
       terrainMetrics.ruggedness >= 0.42 ||
       terrainMetrics.cliffiness >= 0.24 ||
-      elevationAboveWater >= 28
+      elevationAboveWater >= 34
     );
 
+  if (landformType !== LANDFORM_TYPES.MOUNTAIN_CORE && landformType !== LANDFORM_TYPES.ALPINE_SHELF) {
+    return null;
+  }
+
   if (
-    terrainMetrics.mountainness >= 0.72 &&
+    terrainMetrics.mountainness >= 0.76 &&
     terrainMetrics.ruggedness >= 0.48 &&
     severeCold
   ) {
@@ -255,8 +317,7 @@ function getMountainBiomeKey(terrainMetrics, climate, elevationAboveWater) {
   if (
     terrainMetrics.mountainness >= 0.44 &&
     temperateAlpine &&
-    terrainMetrics.ruggedness < 0.64 &&
-    terrainMetrics.cliffiness < 0.34
+    alpineBench
   ) {
     return 'meadow';
   }
@@ -265,14 +326,54 @@ function getMountainBiomeKey(terrainMetrics, climate, elevationAboveWater) {
     return 'stony_peaks';
   }
 
-  if (terrainMetrics.mountainness >= 0.44 && effectiveTemperature > -0.42) {
+  if (
+    terrainMetrics.mountainness >= 0.44 &&
+    effectiveTemperature > -0.42 &&
+    alpineBench
+  ) {
     return 'meadow';
   }
 
   return rockyMountain ? 'stony_peaks' : null;
 }
 
+function getFoothillBiomeKey(terrainMetrics, climate, elevationAboveWater, localRelief = Number.POSITIVE_INFINITY) {
+  if (!terrainMetrics) {
+    return null;
+  }
+
+  const landformType = getLandformType(terrainMetrics, elevationAboveWater, localRelief);
+  if (landformType !== LANDFORM_TYPES.FOOTHILLS) {
+    return null;
+  }
+
+  const foothillness = terrainMetrics.foothillness ?? 0;
+
+  if (
+    foothillness < 0.34 ||
+    elevationAboveWater < 10 ||
+    localRelief < 3 ||
+    localRelief > 26 ||
+    terrainMetrics.cliffiness > 0.28 ||
+    terrainMetrics.mountainness < 0.12
+  ) {
+    return null;
+  }
+
+  const effectiveTemperature = climate?.effectiveTemperature ?? climate?.temperature ?? 0;
+  const moisture = climate?.moisture ?? 0;
+  const freezeChance = climate?.freezeChance ?? 0;
+  const woodedFoothills =
+    moisture > 0.04 &&
+    effectiveTemperature > -0.28 &&
+    freezeChance < 0.66 &&
+    terrainMetrics.ruggedness < 0.68;
+
+  return woodedFoothills ? 'windswept_forest' : 'windswept_hills';
+}
+
 module.exports = {
+  getFoothillBiomeKey,
   getSpawnTerrainBlend,
   getSpawnMajorWaterBlend,
   getTerrainMetrics,

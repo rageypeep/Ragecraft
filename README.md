@@ -15,6 +15,7 @@ Ragecraft can currently:
 - support Minecraft Java `26.1.2` through a compatibility shim
 - complete login, configuration, registry loading, and play-state entry
 - generate a seeded mixed-biome world with full-depth terrain
+- support configurable world bottom and total world height
 - generate full-depth chunks down to Minecraft's normal bottom with a bedrock floor
 - stream chunks around the player as they move
 - send chunk and lighting bootstrap data
@@ -111,7 +112,7 @@ Environment variables:
 | `MC_MAX_PLAYERS` | `20` | Max player count |
 | `MC_ONLINE_MODE` | `false` | Online-mode authentication |
 | `MC_ENCRYPTION` | `false` | Encryption toggle |
-| `MC_VIEW_DISTANCE` | `10` | View distance |
+| `MC_VIEW_DISTANCE` | `4` | View distance |
 | `MC_IS_FLAT` | `false` | Flat-world flag exposed to the client |
 | `MC_WELCOME_MESSAGE` | `Welcome to Ragecraft, {username}.` | Join message |
 | `MC_SPAWN_X` | `0` | Spawn X |
@@ -121,8 +122,10 @@ Environment variables:
 | `MC_SPAWN_PITCH` | `0` | Spawn pitch |
 | `MC_WORLD_MIXED_BIOMES` | `true` | Enable simple biome regions instead of one uniform biome |
 | `MC_WORLD_SEED` | `ragecraft` | Seed string used for deterministic terrain generation |
-| `MC_WORLD_CHUNK_RADIUS` | `2` | Initial generated radius around spawn, in chunks |
+| `MC_WORLD_CHUNK_RADIUS` | `1` | Initial generated radius around spawn, in chunks |
 | `MC_WORLD_STREAM_RADIUS` | `MC_VIEW_DISTANCE` | Streamed chunk radius around each player |
+| `MC_WORLD_MIN_Y` | `-64` | World bottom Y sent to the client and used by terrain generation |
+| `MC_WORLD_HEIGHT` | `384` | Total vertical world height; rounded down to a multiple of `16` |
 | `MC_TERRAIN_THICKNESS` | `12` | Terrain thickness |
 | `MC_TERRAIN_AMPLITUDE` | `4` | Terrain height variation |
 | `MC_WORLD_BIOME` | `taiga` | Biome used when mixed biomes are disabled |
@@ -141,6 +144,8 @@ World generation note:
 - By default, Ragecraft currently mixes plains, sunflower plains, flower forest, forest, birch forest, old growth birch forest, and taiga regions.
 - Generation is deterministic. Changing `MC_WORLD_SEED` creates a different world while keeping chunk streaming and reloads consistent.
 - Trees, caves, ponds, surface decoration, and underground variants are generated from the same seed.
+- Spawn search now rejects cramped tree-adjacent spots and prefers breathable, locally flatter ground.
+- Custom world bounds update both chunk generation and the dimension metadata sent to the client, so deeper or taller worlds stay in sync.
 - To make a new world layout, set `MC_WORLD_SEED` to a new value before starting the server.
 - To force one biome everywhere, set `MC_WORLD_MIXED_BIOMES=false` and then set `MC_WORLD_BIOME` to one of: `plains`, `sunflower_plains`, `forest`, `flower_forest`, `birch_forest`, `old_growth_birch_forest`, `taiga`, `ocean`, `river`, or `beach`.
 - Seed and biome changes only affect newly generated terrain. If you want a completely fresh world, delete `data/world.json` or point `MC_WORLD_SAVE_PATH` at a different save file first.
