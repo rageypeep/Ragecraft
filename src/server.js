@@ -709,6 +709,27 @@ function createMinecraftServer(overrides = {}) {
     client._chunkGenHandle = setImmediate(generateNextBatch);
   }
 
+  function hasReadyLightingNeighborhood(client, chunkX, chunkZ) {
+    const desiredChunkKeys = new Set([
+      ...(client.loadedChunkKeys ?? []),
+      ...(client.pendingChunkKeys ?? [])
+    ]);
+
+    for (const neighbor of world.getChunkNeighborhood(chunkX, chunkZ)) {
+      const neighborChunkKey = `${neighbor.chunkX},${neighbor.chunkZ}`;
+
+      if (!desiredChunkKeys.has(neighborChunkKey) && neighborChunkKey !== `${chunkX},${chunkZ}`) {
+        continue;
+      }
+
+      if (!world.hasChunk(neighbor.chunkX, neighbor.chunkZ)) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
   function processChunkQueue(client) {
     if (!client || !client.pendingChunkQueue || client.pendingChunkQueue.length === 0) {
       return;
@@ -751,6 +772,10 @@ function createMinecraftServer(overrides = {}) {
         continue;
       }
 
+      if (!hasReadyLightingNeighborhood(client, entry.chunkX, entry.chunkZ)) {
+        continue;
+      }
+
       const chunkPacket = world.getChunkPacket(
         entry.chunkX,
         entry.chunkZ,
@@ -762,10 +787,7 @@ function createMinecraftServer(overrides = {}) {
       client.pendingChunkKeys.delete(chunkKey);
       toRemove.add(i);
       sent += 1;
-      broadcastLoadedChunkLightUpdates(
-        world.getChunkNeighborhood(entry.chunkX, entry.chunkZ)
-          .filter(({ chunkX, chunkZ }) => !(chunkX === entry.chunkX && chunkZ === entry.chunkZ))
-      );
+      broadcastLoadedChunkLightUpdates(world.getChunkNeighborhood(entry.chunkX, entry.chunkZ));
     }
 
     if (toRemove.size > 0) {

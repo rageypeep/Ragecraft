@@ -10,6 +10,8 @@ This directory tracks the local porting effort for Minecraft Java Edition `26.1.
 - A raw TCP probe is available to capture the real `26.1.2` handshake and login-start packets
 - An experimental compatibility mode now accepts protocol `775` while using `1.21.11` packet data as a fallback
 - A generated compatibility report now lives in [compatibility-report.md](./compatibility-report.md)
+- Chunk section serialization, light template shaping, and top-surface skylight baking were all corrected enough to make terrain lighting mostly playable
+- Thin black lighting seams still remain in places, and the latest stream-time neighborhood gating workaround reduced artifacts further at the cost of much worse chunk-stream performance
 
 ## Why the probe exists
 
@@ -51,8 +53,6 @@ npm run probe:26.1.2
 
 ## Next targets
 
-- capture and record the `26.1.2` protocol number
-- compare early packet flow against `1.21.11`
-- vendor local protocol metadata instead of waiting on upstream
-- patch the server bootstrap so it can instantiate a `26.1.2` serializer/deserializer path
-- identify the first packet after login/configuration where `26.1.2` diverges from `1.21.11`
+- redesign or remove the current chunk-send neighborhood gate in [src/server.js](/E:/games/MC%20server/src/server.js:709) so lighting experiments do not destroy chunk streaming performance
+- capture one affected terrain seam case and compare the emitted `map_chunk` / `update_light` payloads against what the `26.1.2` client appears to render
+- keep treating `1.21.11` as the packet-data base while verifying each remaining `26.1.2` chunk/light assumption against Mojang reports or decompiled client/server behavior

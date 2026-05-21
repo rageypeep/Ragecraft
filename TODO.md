@@ -4,7 +4,7 @@
 
 - [x] Investigate the underground pond/cave rendering artifact where repeated white "posts" appear under pond floors in generated terrain.
 - [x] Investigate why blocks in that underground pond/cave artifact area can sometimes be broken but not placed back, suggesting a client/server state mismatch or chunk/interaction bounds bug.
-- [ ] Investigate the persistent striped dark lighting artifact still visible across terrain faces, likely related to chunk-neighbor relight timing or stale edge light state.
+- [ ] Investigate the remaining thin black lighting seam artifact still visible across some terrain cuts and slopes; the worst striping is mostly fixed after chunk/light template and skylight bake changes, but the final seams still need a cleaner `26.1.2` compatibility fix.
 
 ## Next
 
@@ -60,6 +60,7 @@
 
 ## Server
 
+- [ ] Rework the latest chunk-stream lighting workaround in [src/server.js](/E:/games/MC%20server/src/server.js:709); waiting for neighboring chunks before send reduced seam severity but tanked streaming performance badly.
 - [ ] Target the remaining join hitch path, especially synchronous safe-spawn resolution and any chunk-stream warm-up stalls still visible after startup.
 - Add player persistence.
 - Add commands.

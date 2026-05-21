@@ -165,14 +165,6 @@ function bakeSkyLightForChunk(targetChunk, targetChunkX, targetChunkZ, worldOpti
         const position = new Vec3(localX, y, localZ);
         const stateId = targetChunk.getBlockStateId(position);
         const absorption = getSkyLightAbsorption(stateId, worldOptions, translucentStateIds);
-
-        if (absorption >= 15) {
-          targetChunk.setSkyLight(position, 0);
-          targetChunk.setBlockLight(position, 0);
-          skyLight = 0;
-          continue;
-        }
-
         targetChunk.setSkyLight(position, skyLight);
         targetChunk.setBlockLight(position, 0);
         skyLight = Math.max(0, skyLight - absorption);
@@ -181,70 +173,116 @@ function bakeSkyLightForChunk(targetChunk, targetChunkX, targetChunkZ, worldOpti
   }
 }
 
-function softenSkyLightForChunk(targetChunk, targetChunkX, targetChunkZ, worldOptions, getChunkAt, lightingLookup, passes = 2) {
+function softenSkyLightForChunk(targetChunk, targetChunkX, targetChunkZ, worldOptions, getChunkAt, lightingLookup) {
   const minY = worldOptions.minWorldY;
   const maxY = worldOptions.maxWorldY;
-  const minWorldX = (targetChunkX - 1) * 16;
-  const maxWorldX = ((targetChunkX + 2) * 16) - 1;
-  const minWorldZ = (targetChunkZ - 1) * 16;
-  const maxWorldZ = ((targetChunkZ + 2) * 16) - 1;
+  const queue = [];
+  const queued = new Set();
+  const worldMinX = targetChunkX * 16;
+  const worldMinZ = targetChunkZ * 16;
+  const worldMaxX = worldMinX + 15;
+  const worldMaxZ = worldMinZ + 15;
 
-  for (let pass = 0; pass < passes; pass++) {
-    const updates = [];
+  function enqueue(localX, y, localZ) {
+    if (localX < 0 || localX > 15 || localZ < 0 || localZ > 15 || y < minY || y > maxY) {
+      return;
+    }
 
-    for (let localX = 0; localX < 16; localX++) {
-      for (let localZ = 0; localZ < 16; localZ++) {
-        for (let y = minY; y <= maxY; y++) {
-          const worldPosition = getWorldPosition(targetChunkX, localX, y, targetChunkZ, localZ);
-          const stateId = targetChunk.getBlockStateId(new Vec3(localX, y, localZ));
-          const absorption = getSkyLightAbsorption(stateId, worldOptions, lightingLookup.translucentStateIds);
+    const key = `${localX},${y},${localZ}`;
 
-          if (absorption >= 15) {
+    if (queued.has(key)) {
+      return;
+    }
+
+    queued.add(key);
+    queue.push({ localX, y, localZ });
+  }
+
+  for (let localX = 0; localX < 16; localX++) {
+    for (let localZ = 0; localZ < 16; localZ++) {
+      for (let y = minY; y <= maxY; y++) {
+        const position = new Vec3(localX, y, localZ);
+        const stateId = targetChunk.getBlockStateId(position);
+        const absorption = getSkyLightAbsorption(stateId, worldOptions, lightingLookup.translucentStateIds);
+
+        if (absorption >= 15) {
+          continue;
+        }
+
+        const worldPosition = getWorldPosition(targetChunkX, localX, y, targetChunkZ, localZ);
+        const currentSkyLight = targetChunk.getSkyLight(position);
+        let brightestNeighbor = currentSkyLight;
+
+        for (const offset of LIGHT_NEIGHBOR_OFFSETS) {
+          const neighborX = worldPosition.x + offset.x;
+          const neighborY = y + offset.y;
+          const neighborZ = worldPosition.z + offset.z;
+
+          if (neighborY < minY || neighborY > maxY) {
             continue;
           }
 
-          const currentSkyLight = targetChunk.getSkyLight(new Vec3(localX, y, localZ));
-          let brightestNeighbor = currentSkyLight;
+          const neighborSkyLight = getSkyLightAtWorld(getChunkAt, neighborX, neighborY, neighborZ);
+          brightestNeighbor = Math.max(brightestNeighbor, Math.max(0, neighborSkyLight - 1));
+        }
 
-          for (const offset of LIGHT_NEIGHBOR_OFFSETS) {
-            const neighborX = worldPosition.x + offset.x;
-            const neighborY = y + offset.y;
-            const neighborZ = worldPosition.z + offset.z;
-
-            if (neighborY < minY || neighborY > maxY) {
-              continue;
-            }
-
-            const neighborSkyLight = getSkyLightAtWorld(getChunkAt, neighborX, neighborY, neighborZ);
-            brightestNeighbor = Math.max(brightestNeighbor, Math.max(0, neighborSkyLight - 1));
-          }
-
-          if (brightestNeighbor > currentSkyLight) {
-            updates.push({
-              skyLight: brightestNeighbor,
-              worldX: worldPosition.x,
-              worldY: y,
-              worldZ: worldPosition.z
-            });
-          }
+        if (brightestNeighbor > currentSkyLight) {
+          targetChunk.setSkyLight(position, brightestNeighbor);
+          enqueue(localX, y, localZ);
         }
       }
     }
+  }
 
-    if (updates.length === 0) {
-      break;
+  for (let queueIndex = 0; queueIndex < queue.length; queueIndex++) {
+    const current = queue[queueIndex];
+    queued.delete(`${current.localX},${current.y},${current.localZ}`);
+
+    const currentPosition = new Vec3(current.localX, current.y, current.localZ);
+    const currentSkyLight = targetChunk.getSkyLight(currentPosition);
+
+    if (currentSkyLight <= 1) {
+      continue;
     }
 
-    for (const update of updates) {
-      setTargetChunkSkyLight(
-        targetChunk,
-        targetChunkX,
-        targetChunkZ,
-        update.worldX,
-        update.worldY,
-        update.worldZ,
-        update.skyLight
-      );
+    const worldX = worldMinX + current.localX;
+    const worldZ = worldMinZ + current.localZ;
+
+    for (const offset of LIGHT_NEIGHBOR_OFFSETS) {
+      const neighborX = worldX + offset.x;
+      const neighborY = current.y + offset.y;
+      const neighborZ = worldZ + offset.z;
+
+      if (
+        neighborY < minY ||
+        neighborY > maxY ||
+        neighborX < worldMinX ||
+        neighborX > worldMaxX ||
+        neighborZ < worldMinZ ||
+        neighborZ > worldMaxZ
+      ) {
+        continue;
+      }
+
+      const neighborLocalX = neighborX - worldMinX;
+      const neighborLocalZ = neighborZ - worldMinZ;
+      const neighborPosition = new Vec3(neighborLocalX, neighborY, neighborLocalZ);
+      const neighborStateId = targetChunk.getBlockStateId(neighborPosition);
+      const absorption = getSkyLightAbsorption(neighborStateId, worldOptions, lightingLookup.translucentStateIds);
+
+      if (absorption >= 15) {
+        continue;
+      }
+
+      const propagatedSkyLight = Math.max(0, currentSkyLight - 1);
+      const existingSkyLight = targetChunk.getSkyLight(neighborPosition);
+
+      if (propagatedSkyLight <= existingSkyLight) {
+        continue;
+      }
+
+      targetChunk.setSkyLight(neighborPosition, propagatedSkyLight);
+      enqueue(neighborLocalX, neighborY, neighborLocalZ);
     }
   }
 }

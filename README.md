@@ -47,6 +47,12 @@ The generated world currently includes:
 
 The `26.1.2` support is not native Prismarine support. Ragecraft uses `1.21.11` packet data as a base and patches newer registry, tag, and packet behavior manually.
 
+Known rough edges right now:
+
+- the old severe terrain-light striping is much better than before, but thin black seam lines still appear on some slopes and cave cuts
+- the latest neighbor-aware chunk-stream lighting workaround reduced those seams further, but chunk streaming performance regressed badly and needs to be redesigned
+- if you are testing terrain/light changes, use a fresh save or reconnect cleanly before comparing screenshots
+
 ## Why this exists
 
 Minecraft multiplayer is much more complicated than it looks from the outside.
@@ -179,6 +185,10 @@ Areas that required custom work include:
 - play-state packet ID remapping
 - light / bootstrap packet ordering
 - inventory slot field mapping
+
+Current compatibility note:
+
+- lighting is now playable enough to explore, but the remaining seam artifact and the new chunk-stream performance regression are both still active issues on the `26.1.2` path
 
 Detailed notes live in [porting/26.1.2/README.md](porting/26.1.2/README.md) and [porting/26.1.2/compatibility-report.md](porting/26.1.2/compatibility-report.md).
 

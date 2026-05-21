@@ -83,40 +83,28 @@ function countSectionFluidBlocks(chunk, sectionIndex, fluidStateId, maxFluidStat
   return count;
 }
 
-function countSectionNonEmptyBlocks(chunk, sectionIndex) {
-  const sectionBaseY = chunk.minY + (sectionIndex * 16);
-  let count = 0;
-
-  for (let localY = 0; localY < 16; localY++) {
-    for (let localZ = 0; localZ < 16; localZ++) {
-      for (let localX = 0; localX < 16; localX++) {
-        if (chunk.getBlockStateId(new Vec3(localX, sectionBaseY + localY, localZ)) !== 0) {
-          count += 1;
-        }
-      }
-    }
-  }
-
-  return count;
-}
-
 function encodeChunkData(chunk, worldOptions) {
   const buffer = new SmartBuffer();
+  const includeFluidCount = worldOptions?.chunkSectionIncludesFluidCount === true;
 
   for (let index = 0; index < chunk.sections.length; index++) {
     const section = chunk.sections[index];
     const biome = chunk.biomes[index];
-    const nonEmptyBlockCount = countSectionNonEmptyBlocks(chunk, index);
-    const fluidCount = countSectionFluidBlocks(
-      chunk,
-      index,
-      worldOptions?.terrainBlockStateIds?.water,
-      worldOptions?.terrainBlockStateIds?.waterMax
-    );
 
-    buffer.writeInt16BE(nonEmptyBlockCount);
-    buffer.writeInt16BE(fluidCount);
-    section.data.write(buffer);
+    if (includeFluidCount) {
+      buffer.writeInt16BE(section.solidBlockCount ?? 0);
+      buffer.writeInt16BE(countSectionFluidBlocks(
+        chunk,
+        index,
+        worldOptions?.terrainBlockStateIds?.water,
+        worldOptions?.terrainBlockStateIds?.waterMax
+      ));
+      section.data.write(buffer);
+      biome.write(buffer);
+      continue;
+    }
+
+    section.write(buffer);
     biome.write(buffer);
   }
 

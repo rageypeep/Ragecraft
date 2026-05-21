@@ -55,6 +55,9 @@ const DEFAULT_WORLD_OPTIONS = {
   seed: 'thisisjustatestseed',
   chunkRadius: 2,
   streamRadius: null,
+  enableCaves: true,
+  enableSurfaceUndercuts: true,
+  enableMountainDensity: true,
   foundationBlock: 'stone',
   soilBlock: 'dirt',
   surfaceBlock: 'grass_block',
@@ -154,6 +157,7 @@ function resolveWorldOptions(mcData, config = {}) {
   const maxWorldY = minWorldY + worldHeight - 1;
 
   return {
+    chunkSectionIncludesFluidCount: typeof config.version === 'string' && config.version.startsWith('26.1'),
     biomeId: fallbackBiomeId,
     biomeName: worldConfig.biome,
     mixedBiomes: worldConfig.mixedBiomes !== false,
@@ -161,6 +165,9 @@ function resolveWorldOptions(mcData, config = {}) {
     seedHash: hashStringSeed(worldConfig.seed ?? DEFAULT_WORLD_OPTIONS.seed),
     chunkRadius: Math.max(1, worldConfig.chunkRadius),
     streamRadius: Math.max(1, configuredStreamRadius),
+    enableCaves: worldConfig.enableCaves !== false,
+    enableSurfaceUndercuts: worldConfig.enableSurfaceUndercuts !== false,
+    enableMountainDensity: worldConfig.enableMountainDensity !== false,
     biomeIds: {
       beach: resolveBiomeId(mcData, ['beach'], fallbackBiomeId),
       lake: resolveBiomeId(mcData, ['river', 'swamp'], fallbackBiomeId),
@@ -717,7 +724,9 @@ function getColumnDescriptor(worldOptions, surfaceY, spawn, worldX, worldZ) {
 
   let mountainDensity = null;
   if (shouldUseMountainDensitySurface({
+    allowMountainDensity: worldOptions.enableMountainDensity,
     biomeKey: biomeProfile.biomeKey,
+    landformType,
     localRelief,
     terrainMetrics: baseTerrainMetrics,
     waterTopY: oceanColumn.active
@@ -1159,6 +1168,10 @@ function collectPopulationFeaturesForChunk(worldOptions, surfaceY, spawn, chunkX
 }
 
 function getSurfaceShapeContext(worldOptions, surfaceY, spawn, worldX, worldZ, column) {
+  if (worldOptions.enableSurfaceUndercuts === false) {
+    return null;
+  }
+
   if (!column?.baseTerrainMetrics || column.waterTopY !== null) {
     return null;
   }
@@ -1169,6 +1182,12 @@ function getSurfaceShapeContext(worldOptions, surfaceY, spawn, worldX, worldZ, c
 
   const biomeKey = column.biomeProfile?.biomeKey;
   const landformType = column.landformType ?? LANDFORM_TYPES.INTERIOR_LOWLANDS;
+  const supportsSurfaceUndercuts = (
+    biomeKey === 'jagged_peaks' ||
+    biomeKey === 'stony_peaks' ||
+    biomeKey === 'windswept_hills' ||
+    biomeKey === 'windswept_forest'
+  );
   if (
     biomeKey === 'beach' ||
     biomeKey === 'stony_shore' ||
@@ -1181,6 +1200,10 @@ function getSurfaceShapeContext(worldOptions, surfaceY, spawn, worldX, worldZ, c
     biomeKey === 'cold_ocean' ||
     biomeKey === 'frozen_ocean'
   ) {
+    return null;
+  }
+
+  if (!supportsSurfaceUndercuts || landformType !== LANDFORM_TYPES.MOUNTAIN_CORE) {
     return null;
   }
 
@@ -1376,11 +1399,17 @@ function getChunkTopSolidY(chunk, localX, localZ) {
 }
 
 function shouldUseMountainDensitySurface({
+  allowMountainDensity = true,
   biomeKey,
+  landformType,
   localRelief,
   terrainMetrics,
   waterTopY
 }) {
+  if (!allowMountainDensity) {
+    return false;
+  }
+
   if (!terrainMetrics || waterTopY !== null) {
     return false;
   }
@@ -1400,10 +1429,22 @@ function shouldUseMountainDensitySurface({
     return false;
   }
 
+  if (landformType !== LANDFORM_TYPES.MOUNTAIN_CORE) {
+    return false;
+  }
+
   const peakBiome = (
     biomeKey === 'jagged_peaks' ||
     biomeKey === 'stony_peaks'
   );
+  const windsweptMountainBiome = (
+    biomeKey === 'windswept_hills' ||
+    biomeKey === 'windswept_forest'
+  );
+
+  if (!peakBiome && !windsweptMountainBiome) {
+    return false;
+  }
 
   return (
     (
@@ -1679,6 +1720,10 @@ function getCaveSignal(worldOptions, worldX, worldY, worldZ) {
 }
 
 function shouldCarveCave(worldOptions, spawn, column, worldX, worldY, worldZ) {
+  if (worldOptions.enableCaves === false) {
+    return false;
+  }
+
   if (isNearSpawn(spawn, worldX, worldZ, CAVE_SPAWN_CLEAR_RADIUS)) {
     return false;
   }
@@ -1687,7 +1732,35 @@ function shouldCarveCave(worldOptions, spawn, column, worldX, worldY, worldZ) {
     return false;
   }
 
-  if (worldY >= column.topY - CAVE_MIN_SURFACE_ROOF) {
+  const biomeKey = column.biomeProfile?.biomeKey;
+  const landformType = column.landformType ?? LANDFORM_TYPES.INTERIOR_LOWLANDS;
+  const localRelief = column.localRelief ?? 0;
+  const cliffiness = column.baseTerrainMetrics?.cliffiness ?? 0;
+  const mountainness = column.baseTerrainMetrics?.mountainness ?? 0;
+  const mountainCaveZone = (
+    landformType === LANDFORM_TYPES.MOUNTAIN_CORE &&
+    (
+      biomeKey === 'jagged_peaks' ||
+      biomeKey === 'stony_peaks' ||
+      biomeKey === 'windswept_hills' ||
+      biomeKey === 'windswept_forest'
+    )
+  );
+  const baseRequiredSurfaceRoof = mountainCaveZone ? 12 : 20;
+  const slopeRoofBonus = Math.round(Math.max(
+    0,
+    (localRelief - 8) * 0.35,
+    (cliffiness - 0.22) * 10,
+    mountainCaveZone
+      ? (mountainness - 0.34) * 6
+      : (mountainness - 0.46) * 4
+  ));
+  const requiredSurfaceRoof = Math.min(
+    mountainCaveZone ? 18 : 28,
+    baseRequiredSurfaceRoof + slopeRoofBonus
+  );
+
+  if (worldY >= column.topY - requiredSurfaceRoof) {
     return false;
   }
 
@@ -1697,12 +1770,17 @@ function shouldCarveCave(worldOptions, spawn, column, worldX, worldY, worldZ) {
 
   const caveDepth = column.topY - worldY;
 
-  if (caveDepth < CAVE_MIN_SURFACE_ROOF) {
+  if (caveDepth < requiredSurfaceRoof) {
     return false;
   }
 
-  const depthFactor = clamp((caveDepth - CAVE_MIN_SURFACE_ROOF) / 16, 0, 1);
-  const caveThreshold = 2.8 - (depthFactor * 0.35);
+  const depthFactor = clamp((caveDepth - requiredSurfaceRoof) / 16, 0, 1);
+  const caveThreshold = (
+    2.86 -
+    (depthFactor * 0.32) +
+    Math.min(0.22, slopeRoofBonus * 0.016) +
+    (mountainCaveZone ? 0 : 0.08)
+  );
   return getCaveSignal(worldOptions, worldX, worldY, worldZ) > caveThreshold;
 }
 

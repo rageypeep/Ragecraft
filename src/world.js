@@ -307,19 +307,36 @@ function createInitialWorldPackets(mcData, config, savedWorldState = { blocks: [
   }
 
   function rebakeLightingForChunkCoordinates(chunkCoordinates) {
-    const rebakedChunks = [];
+    const queued = new Map();
 
     for (const { chunkX, chunkZ } of chunkCoordinates) {
-      const chunkKey = getChunkKey(chunkX, chunkZ);
+      for (const neighbor of collectChunkNeighborhood(chunkX, chunkZ, 1)) {
+        const chunkKey = getChunkKey(neighbor.chunkX, neighbor.chunkZ);
 
-      if (!chunks.has(chunkKey)) {
-        continue;
+        if (!chunks.has(chunkKey)) {
+          continue;
+        }
+
+        queued.set(chunkKey, neighbor);
       }
+    }
 
-      const chunkEntry = chunks.get(chunkKey);
-      materializeChunkEntry(chunkEntry);
+    const rebakeTargets = Array.from(queued.values());
 
-      bakeChunkLightingRegion(chunkX, chunkZ, worldOptions, getChunkAt);
+    for (const { chunkX, chunkZ } of rebakeTargets) {
+      materializeChunkEntry(chunks.get(getChunkKey(chunkX, chunkZ)));
+    }
+
+    for (let pass = 0; pass < 2; pass++) {
+      for (const { chunkX, chunkZ } of rebakeTargets) {
+        bakeChunkLightingRegion(chunkX, chunkZ, worldOptions, getChunkAt);
+      }
+    }
+
+    const rebakedChunks = [];
+
+    for (const { chunkX, chunkZ } of rebakeTargets) {
+      const chunkEntry = chunks.get(getChunkKey(chunkX, chunkZ));
       chunkEntry.lightingDirty = false;
       rebakedChunks.push({ chunkX, chunkZ });
     }
@@ -354,8 +371,7 @@ function createInitialWorldPackets(mcData, config, savedWorldState = { blocks: [
       return chunkEntry;
     }
 
-    bakeChunkLightingRegion(chunkX, chunkZ, worldOptions, getChunkAt);
-    chunkEntry.lightingDirty = false;
+    rebakeLightingForChunkCoordinates([{ chunkX, chunkZ }]);
     return chunkEntry;
   }
 

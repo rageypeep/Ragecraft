@@ -13,11 +13,14 @@ const DEFAULTS = {
   world: {
     biome: 'taiga',
     mixedBiomes: true,
-    seed: 'peterdeacon1234',
+    seed: '998563184',
     chunkRadius: 1,
     streamRadius: null,
     minY: -64,
     worldHeight: 384,
+    enableCaves: false,
+    enableSurfaceUndercuts: false,
+    enableMountainDensity: false,
     foundationBlock: 'stone',
     soilBlock: 'dirt',
     surfaceBlock: 'grass_block',
@@ -83,6 +86,15 @@ function loadConfig(overrides = {}) {
       : readNumber('MC_WORLD_STREAM_RADIUS', DEFAULTS.viewDistance),
     minY: readNumber('MC_WORLD_MIN_Y', DEFAULTS.world.minY),
     worldHeight: readNumber('MC_WORLD_HEIGHT', DEFAULTS.world.worldHeight),
+    enableCaves: readBoolean('MC_WORLD_ENABLE_CAVES', DEFAULTS.world.enableCaves),
+    enableSurfaceUndercuts: readBoolean(
+      'MC_WORLD_ENABLE_SURFACE_UNDERCUTS',
+      DEFAULTS.world.enableSurfaceUndercuts
+    ),
+    enableMountainDensity: readBoolean(
+      'MC_WORLD_ENABLE_MOUNTAIN_DENSITY',
+      DEFAULTS.world.enableMountainDensity
+    ),
     foundationBlock: process.env.MC_FOUNDATION_BLOCK ?? DEFAULTS.world.foundationBlock,
     soilBlock: process.env.MC_SOIL_BLOCK ?? DEFAULTS.world.soilBlock,
     surfaceBlock: process.env.MC_SURFACE_BLOCK ?? DEFAULTS.world.surfaceBlock,
