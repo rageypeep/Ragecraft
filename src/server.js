@@ -1,13 +1,16 @@
 const mc = require('minecraft-protocol');
 const { createCompatibilityBlockStateTranslator } = require('./block-state-translator');
 const { loadConfig } = require('./config');
+const { createRecipeCatalog } = require('./crafting');
+const { createCompatibilityItemIdTranslator } = require('./item-id-translator');
 const {
+  addItem,
+  cloneInventoryState,
   consumeSelectedItem,
   createPlayerInventory,
   getHotbarItem,
   resolveBlockStateIdForItem,
-  setSelectedHotbarSlot,
-  toProtocolSlot
+  setSelectedHotbarSlot
 } = require('./inventory');
 const { createInitialWorldPackets } = require('./world');
 const { loadWorldState, saveWorldState } = require('./world-persistence');
@@ -29,11 +32,16 @@ const {
   buildPlayerBootstrapPackets,
   buildPlayerStatusPackets,
   buildRespawnPacket,
-  createLightUpdatePacket
+  createLightUpdatePacket,
+  resolvePlayerSpawn
 } = require('./server/bootstrap');
 const { buildBlockChangePacket, extractSelectedSlot, shouldBreakBlock } = require('./server/blocks');
 const { createChatApi, extractChatMessage, formatWelcomeMessage } = require('./server/chat');
+const { createCommandApi } = require('./server/commands');
+const { createCraftingTableApi } = require('./server/crafting-table');
+const { createPlayerTracker } = require('./server/entity-tracking');
 const { createItemDropManager } = require('./server/item-entities');
+const { createPlayerInventoryApi } = require('./server/player-inventory');
 const {
   createPlayerState,
   recordArmAnimation,
@@ -53,7 +61,6 @@ const DAY_LENGTH_TICKS = 24000n;
 const CHUNK_SEND_INTERVAL_MS = 25;
 const CHUNK_SEND_BATCH_SIZE = 10;
 const CHUNK_SEND_TIME_BUDGET_MS = 30;
-const CHUNK_GEN_BATCH_SIZE = 1;
 const CHUNK_GEN_TIME_BUDGET_MS = 15;
 
 function createMinecraftServer(overrides = {}) {
@@ -62,16 +69,21 @@ function createMinecraftServer(overrides = {}) {
   const mcData = require('minecraft-data')(versionTarget.protocolDataVersion);
   const chunkWorkerPool = createChunkWorkerPool();
   const persistedWorldState = loadWorldState(config.worldSavePath);
+  const persistedPlayers = new Map(Object.entries(persistedWorldState.players ?? {}));
   const world = createInitialWorldPackets(mcData, {
     ...config,
     _chunkWorkerPool: chunkWorkerPool
   }, persistedWorldState);
   const baseRegistryCodec = mcData.registryCodec || mcData.loginPacket?.dimensionCodec || {};
+  const crafting = createRecipeCatalog(mcData);
   const registryOverrides = versionTarget.compatibility
     ? loadCompatibilityRegistryOverrides(versionTarget.advertisedVersion)
     : null;
   const blockStateTranslator = versionTarget.compatibility
     ? createCompatibilityBlockStateTranslator(mcData, versionTarget.advertisedVersion)
+    : null;
+  const itemIdTranslator = versionTarget.compatibility
+    ? createCompatibilityItemIdTranslator(mcData, versionTarget.advertisedVersion)
     : null;
   const registryCodec = versionTarget.compatibility
     ? buildCompatibilityRegistryCodec(baseRegistryCodec, registryOverrides)
@@ -93,6 +105,7 @@ function createMinecraftServer(overrides = {}) {
     ...versionTarget.createServerOptions
   });
   const loginPacket = mcData.loginPacket;
+  const craftingTableBlockStateId = mcData.blocksByName.crafting_table?.defaultState ?? null;
 
   server.requestedVersion = versionTarget.requestedVersion;
   server.protocolDataVersion = versionTarget.protocolDataVersion;
@@ -106,6 +119,7 @@ function createMinecraftServer(overrides = {}) {
     ? Object.keys(registryOverrides.registries ?? {}).length
     : 0;
   server.compatibilityTagTypeCount = server.compatibilityTags.length;
+  server.crafting = crafting;
   server.world = world;
   server.registryCodec = resolvedRegistryCodec;
   server.worldTimeState = buildPlayerStatusPackets().time;
@@ -116,8 +130,111 @@ function createMinecraftServer(overrides = {}) {
     });
   });
 
+  function serializePersistedPlayers() {
+    return Object.fromEntries(persistedPlayers.entries());
+  }
+
+  function snapshotPlayerState(client) {
+    if (!client?.username) {
+      return null;
+    }
+
+    const inventorySnapshot = client.inventoryState
+      ? cloneInventoryState(client.inventoryState)
+      : null;
+
+    if (inventorySnapshot && client.activeContainer?.type === 'minecraft:crafting_table') {
+      for (const item of client.activeContainer.craftInput ?? []) {
+        if (!item) {
+          continue;
+        }
+
+        addItem(inventorySnapshot, mcData, item.itemId, item.count);
+      }
+    }
+
+    const playerPosition = client.playerPosition && Number.isFinite(client.playerPosition.x)
+      ? {
+          x: client.playerPosition.x,
+          y: client.playerPosition.y,
+          z: client.playerPosition.z,
+          yaw: Number.isFinite(client.playerPosition.yaw) ? client.playerPosition.yaw : 0,
+          pitch: Number.isFinite(client.playerPosition.pitch) ? client.playerPosition.pitch : 0
+        }
+      : null;
+
+    return {
+      position: playerPosition,
+      inventory: inventorySnapshot
+        ? {
+            craftInput: inventorySnapshot.craftInput.map((item) => (
+              item
+                ? {
+                    itemId: item.itemId,
+                    count: item.count
+                  }
+                : null
+            )),
+            armor: inventorySnapshot.armor.map((item) => (
+              item
+                ? {
+                    itemId: item.itemId,
+                    count: item.count
+                  }
+                : null
+            )),
+            main: inventorySnapshot.main.map((item) => (
+              item
+                ? {
+                    itemId: item.itemId,
+                    count: item.count
+                  }
+                : null
+            )),
+            hotbar: inventorySnapshot.hotbar.map((item) => (
+              item
+                ? {
+                    itemId: item.itemId,
+                    count: item.count
+                  }
+                : null
+            )),
+            offhand: inventorySnapshot.offhand
+              ? {
+                  itemId: inventorySnapshot.offhand.itemId,
+                  count: inventorySnapshot.offhand.count
+                }
+              : null,
+            selectedSlot: inventorySnapshot.selectedSlot ?? 0
+          }
+        : null
+    };
+  }
+
+  function rememberPlayerState(client) {
+    const snapshot = snapshotPlayerState(client);
+
+    if (!snapshot) {
+      return;
+    }
+
+    persistedPlayers.set(client.username, snapshot);
+  }
+
   function connectedClients(excludeClient = null) {
     return Object.values(server.clients).filter((client) => client !== excludeClient);
+  }
+
+  function prewarmSpawnChunks() {
+    const spawnNeighborhood = world.getChunkNeighborhood(
+      world.spawnChunk.x,
+      world.spawnChunk.z,
+      world.streamRadius
+    );
+
+    return Promise.allSettled(
+      spawnNeighborhood.map(({ chunkX, chunkZ }) => world.preGenerateChunk(chunkX, chunkZ))
+    );
   }
 
   function translateBlockStateId(stateId) {
@@ -261,54 +378,6 @@ function createMinecraftServer(overrides = {}) {
     }
   }
 
-  function broadcastLoadedChunkLightUpdates(chunkCoordinates) {
-    const seen = new Set();
-
-    for (const { chunkX, chunkZ } of chunkCoordinates ?? []) {
-      const chunkKey = `${chunkX},${chunkZ}`;
-
-      if (seen.has(chunkKey)) {
-        continue;
-      }
-
-      seen.add(chunkKey);
-
-      let hasInterestedClient = false;
-
-      for (const client of connectedClients()) {
-        if (client.loadedChunkKeys?.has(chunkKey)) {
-          hasInterestedClient = true;
-          break;
-        }
-      }
-
-      if (!hasInterestedClient) {
-        continue;
-      }
-
-      const lightUpdatePacket = world.getChunkLightUpdate(chunkX, chunkZ);
-
-      for (const client of connectedClients()) {
-        if (!client.loadedChunkKeys?.has(chunkKey)) {
-          continue;
-        }
-
-        writePlayPacket(client, 'update_light', lightUpdatePacket);
-      }
-    }
-  }
-
-  function sendInventorySlotUpdate(client, slot) {
-    if (!client.inventoryState) {
-      return;
-    }
-
-    writePlayPacket(client, 'set_player_inventory', {
-      slotId: slot,
-      contents: toProtocolSlot(client.inventoryState.hotbar[slot] ?? null)
-    });
-  }
-
   function allocateTeleportId(client) {
     const teleportId = client.nextTeleportId ?? 1;
     client.nextTeleportId = teleportId + 1;
@@ -345,61 +414,6 @@ function createMinecraftServer(overrides = {}) {
     };
   }
 
-  function createLiteralCommandNode(name, childIndexes = []) {
-    return {
-      flags: {
-        command_node_type: 1,
-        has_command: 0,
-        has_redirect_node: 0,
-        has_custom_suggestions: 0,
-        allows_restricted: 0
-      },
-      children: childIndexes,
-      extraNodeData: {
-        name
-      }
-    };
-  }
-
-  function createVec3ArgumentCommandNode(name) {
-    return {
-      flags: {
-        command_node_type: 2,
-        has_command: 1,
-        has_redirect_node: 0,
-        has_custom_suggestions: 0,
-        allows_restricted: 0
-      },
-      children: [],
-      extraNodeData: {
-        name,
-        parser: 'minecraft:vec3'
-      }
-    };
-  }
-
-  function createCommandDeclarationPacket() {
-    return {
-      nodes: [
-        {
-          flags: {
-            command_node_type: 0,
-            has_command: 0,
-            has_redirect_node: 0,
-            has_custom_suggestions: 0,
-            allows_restricted: 0
-          },
-          children: [1, 3]
-        },
-        createLiteralCommandNode('tp', [2]),
-        createVec3ArgumentCommandNode('location'),
-        createLiteralCommandNode('teleport', [4]),
-        createVec3ArgumentCommandNode('location')
-      ],
-      rootIndex: 0
-    };
-  }
-
   function sendPlayerStatusPackets(client, playerStatus) {
     writePlayPacket(client, 'update_time', server.worldTimeState);
     writePlayPacket(client, 'update_health', playerStatus.health);
@@ -411,15 +425,103 @@ function createMinecraftServer(overrides = {}) {
     sendPlayerStatusPackets(client, playerStatus);
   }
 
+  function updateWorldTime(nextTime) {
+    server.worldTimeState = {
+      ...server.worldTimeState,
+      time: nextTime
+    };
+
+    for (const client of connectedClients()) {
+      if (!client.worldStateReady) {
+        continue;
+      }
+
+      writePlayPacket(client, 'update_time', server.worldTimeState);
+    }
+  }
+
   function saveWorld() {
-    saveWorldState(config.worldSavePath, world.serialize());
+    saveWorldState(config.worldSavePath, {
+      ...world.serialize(),
+      players: serializePersistedPlayers()
+    });
+  }
+  server._ragecraftCleanupHandlers.push(() => saveWorld());
+
+  let craftingTableApi = null;
+  const playerInventoryApi = createPlayerInventoryApi({
+    crafting,
+    mcData,
+    translateItemId: itemIdTranslator?.translate,
+    writePlayPacket
+  });
+
+  function sendVisibleInventoryState(client) {
+    if (craftingTableApi?.commitVisibleInventoryChange(client)) {
+      rememberPlayerState(client);
+      return;
+    }
+
+    playerInventoryApi.commitInventoryChange(client);
+    rememberPlayerState(client);
+  }
+
+  function closeOpenContainer(client, sendPacket = false) {
+    if (!craftingTableApi?.closeActiveWindow(client, { sendPacket })) {
+      return false;
+    }
+
+    playerInventoryApi.commitInventoryChange(client);
+    rememberPlayerState(client);
+    return true;
+  }
+
+  function sendInventorySlotUpdate(client, slot) {
+    if (craftingTableApi?.commitVisibleInventoryChange(client)) {
+      rememberPlayerState(client);
+      return;
+    }
+
+    playerInventoryApi.sendHotbarSlotUpdate(client, slot);
+    rememberPlayerState(client);
   }
 
   const itemDropManager = createItemDropManager({
     connectedClients,
     mcData,
-    sendInventorySlotUpdate,
+    onInventoryChanged: rememberPlayerState,
+    sendInventoryState: sendVisibleInventoryState,
+    translateItemId: itemIdTranslator?.translate,
     writePlayPacket
+  });
+  craftingTableApi = createCraftingTableApi({
+    crafting,
+    mcData,
+    onOverflowItem(client, item) {
+      if (!client?.playerPosition || !item) {
+        return;
+      }
+
+      itemDropManager.spawnDrop(item.itemId, item.count, client.playerPosition);
+    },
+    translateItemId: itemIdTranslator?.translate,
+    writePlayPacket
+  });
+  const playerTracker = createPlayerTracker({
+    connectedClients,
+    mcData,
+    writePlayPacket
+  });
+  const { createCommandDeclarationPacket, tryHandlePlayerCommand } = createCommandApi({
+    config,
+    crafting,
+    saveWorld,
+    sendFullInventoryState: sendVisibleInventoryState,
+    sendMessage,
+    server,
+    teleportClient,
+    updateWorldTime,
+    world
   });
   server._ragecraftCleanupHandlers.push(() => itemDropManager.cleanup());
   const chunkQueueInterval = setInterval(() => {
@@ -428,44 +530,9 @@ function createMinecraftServer(overrides = {}) {
     }
   }, CHUNK_SEND_INTERVAL_MS);
   server._ragecraftCleanupHandlers.push(() => clearInterval(chunkQueueInterval));
-
-  function sendInventoryBootstrap(client) {
-    if (!client.inventoryState) {
-      return;
-    }
-
-    for (let slot = 0; slot < client.inventoryState.hotbar.length; slot++) {
-      sendInventorySlotUpdate(client, slot);
-    }
-
-    writePlayPacket(client, 'held_item_slot', {
-      slot: client.inventoryState.selectedSlot
-    });
-  }
-
-  function parseTeleportCoordinate(token, baseValue) {
-    if (typeof token !== 'string' || !Number.isFinite(baseValue)) {
-      return null;
-    }
-
-    if (token === '~') {
-      return baseValue;
-    }
-
-    if (token.startsWith('~')) {
-      const offset = token.slice(1);
-
-      if (!offset) {
-        return baseValue;
-      }
-
-      const numericOffset = Number(offset);
-      return Number.isFinite(numericOffset) ? baseValue + numericOffset : null;
-    }
-
-    const absoluteValue = Number(token);
-    return Number.isFinite(absoluteValue) ? absoluteValue : null;
-  }
+  server.spawnChunkWarmupPromise = prewarmSpawnChunks().catch((error) => {
+    console.error('[chunk-warmup:error]', error);
+  });
 
   function teleportClient(client, targetPosition) {
     if (!client || !targetPosition) {
@@ -488,8 +555,10 @@ function createMinecraftServer(overrides = {}) {
     };
     const teleportId = allocateTeleportId(client);
 
+    closeOpenContainer(client, true);
     cancelChunkGeneration(client);
     itemDropManager.setClientPosition(client, resolvedPosition);
+    rememberPlayerState(client);
 
     if (client.playerState) {
       client.playerState.pendingTeleportId = teleportId;
@@ -497,53 +566,8 @@ function createMinecraftServer(overrides = {}) {
 
     syncClientChunks(client, true);
     writePositionPacket(client, buildPositionPacket(resolvedPosition, teleportId));
+    playerTracker.broadcastTeleport(client);
     itemDropManager.attemptPickup(client);
-    return true;
-  }
-
-  function tryHandlePlayerCommand(client, rawMessage) {
-    if (typeof rawMessage !== 'string' || !rawMessage.startsWith('/')) {
-      return false;
-    }
-
-    const tokens = rawMessage.slice(1).trim().split(/\s+/).filter(Boolean);
-
-    if (tokens.length === 0) {
-      return true;
-    }
-
-    const command = tokens.shift()?.toLowerCase();
-
-    if (command !== 'tp' && command !== 'teleport') {
-      sendMessage([client], `Unknown command: /${command}`, 'Server', 'system');
-      return true;
-    }
-
-    if (tokens[0] === '@s') {
-      tokens.shift();
-    }
-
-    if (tokens.length !== 3) {
-      sendMessage([client], 'Usage: /tp [@s] <x> <y> <z> (supports ~ relative coordinates)', 'Server', 'system');
-      return true;
-    }
-
-    const currentPosition = client.playerPosition ?? {
-      x: 0,
-      y: config.spawn.y,
-      z: 0
-    };
-    const x = parseTeleportCoordinate(tokens[0], currentPosition.x ?? 0);
-    const y = parseTeleportCoordinate(tokens[1], currentPosition.y ?? config.spawn.y);
-    const z = parseTeleportCoordinate(tokens[2], currentPosition.z ?? 0);
-
-    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
-      sendMessage([client], 'Invalid teleport coordinates.', 'Server', 'system');
-      return true;
-    }
-
-    teleportClient(client, { x, y, z });
-    sendMessage([client], `Teleported to ${Math.floor(x)} ${Math.floor(y)} ${Math.floor(z)}.`, 'Server', 'system');
     return true;
   }
 
@@ -583,7 +607,8 @@ function createMinecraftServer(overrides = {}) {
       deltaX,
       deltaZ,
       distance: Math.abs(deltaX) + Math.abs(deltaZ),
-      distanceSquared
+      distanceSquared,
+      preGenerationRequested: false
     });
   }
 
@@ -683,11 +708,15 @@ function createMinecraftServer(overrides = {}) {
           continue;
         }
 
-        if (world.hasChunk(entry.chunkX, entry.chunkZ)) {
+        if (entry.preGenerationRequested || world.hasChunk(entry.chunkX, entry.chunkZ)) {
           continue;
         }
 
-        world.preGenerateChunk(entry.chunkX, entry.chunkZ).catch((error) => {
+        entry.preGenerationRequested = true;
+        world.preGenerateChunk(entry.chunkX, entry.chunkZ).then(() => {
+          entry.preGenerationRequested = false;
+        }).catch((error) => {
+          entry.preGenerationRequested = false;
           console.error('[chunk-worker:error]', error);
         });
 
@@ -709,27 +738,6 @@ function createMinecraftServer(overrides = {}) {
     client._chunkGenHandle = setImmediate(generateNextBatch);
   }
 
-  function hasReadyLightingNeighborhood(client, chunkX, chunkZ) {
-    const desiredChunkKeys = new Set([
-      ...(client.loadedChunkKeys ?? []),
-      ...(client.pendingChunkKeys ?? [])
-    ]);
-
-    for (const neighbor of world.getChunkNeighborhood(chunkX, chunkZ)) {
-      const neighborChunkKey = `${neighbor.chunkX},${neighbor.chunkZ}`;
-
-      if (!desiredChunkKeys.has(neighborChunkKey) && neighborChunkKey !== `${chunkX},${chunkZ}`) {
-        continue;
-      }
-
-      if (!world.hasChunk(neighbor.chunkX, neighbor.chunkZ)) {
-        return false;
-      }
-    }
-
-    return true;
-  }
-
   function processChunkQueue(client) {
     if (!client || !client.pendingChunkQueue || client.pendingChunkQueue.length === 0) {
       return;
@@ -738,7 +746,6 @@ function createMinecraftServer(overrides = {}) {
     client.pendingChunkQueue.sort((left, right) => compareChunkQueueEntries(left, right, client));
     const startedAt = process.hrtime.bigint();
     let sent = 0;
-    let generated = 0;
     const toRemove = new Set();
 
     for (let i = 0; i < client.pendingChunkQueue.length; i++) {
@@ -764,15 +771,6 @@ function createMinecraftServer(overrides = {}) {
       }
 
       if (!world.hasChunk(entry.chunkX, entry.chunkZ)) {
-        if (generated >= CHUNK_GEN_BATCH_SIZE) {
-          continue;
-        }
-
-        generated += 1;
-        continue;
-      }
-
-      if (!hasReadyLightingNeighborhood(client, entry.chunkX, entry.chunkZ)) {
         continue;
       }
 
@@ -787,7 +785,6 @@ function createMinecraftServer(overrides = {}) {
       client.pendingChunkKeys.delete(chunkKey);
       toRemove.add(i);
       sent += 1;
-      broadcastLoadedChunkLightUpdates(world.getChunkNeighborhood(entry.chunkX, entry.chunkZ));
     }
 
     if (toRemove.size > 0) {
@@ -869,11 +866,13 @@ function createMinecraftServer(overrides = {}) {
   }
 
   function respawnPlayer(client) {
-    const safeSpawn = world.getSafeSpawnPosition();
+    const safeSpawn = resolvePlayerSpawn(world);
     const teleportId = allocateTeleportId(client);
 
+    closeOpenContainer(client, true);
     cancelChunkGeneration(client);
     itemDropManager.setClientPosition(client, safeSpawn);
+    rememberPlayerState(client);
     client.loadedChunkKeys = new Set();
     client.pendingChunkKeys = new Set();
     client.pendingChunkQueue = [];
@@ -890,27 +889,37 @@ function createMinecraftServer(overrides = {}) {
     writePlayPacket(client, 'spawn_position', createSpawnPositionPacket(safeSpawn));
     syncClientChunks(client, true);
     writePositionPacket(client, buildPositionPacket(safeSpawn, teleportId));
+    playerTracker.broadcastTeleport(client);
     finalizeClientWorldState(client, client.playerStatus);
   }
 
   function initializePlayer(client) {
     const address = `${client.socket.remoteAddress}:${client.socket.remotePort}`;
-    const bootstrapPackets = buildPlayerBootstrapPackets(client, config, world, loginPacket);
-    client.inventoryState = createPlayerInventory(mcData);
+    const persistedPlayer = persistedPlayers.get(client.username) ?? null;
+    const bootstrapPackets = buildPlayerBootstrapPackets(client, config, world, loginPacket, persistedPlayer);
+    client.inventoryState = createPlayerInventory(mcData, persistedPlayer?.inventory ?? null);
+    playerInventoryApi.recomputeCraftingResult(client.inventoryState);
     client.playerState = createPlayerState(bootstrapPackets.position.teleportId);
     client.playerStatus = bootstrapPackets.playerStatus;
     client.nextTeleportId = 1;
+    client.activeContainer = null;
     client.worldStateReady = false;
     itemDropManager.setClientPosition(client, bootstrapPackets.position);
     client.loadedChunkKeys = new Set();
     client.pendingChunkKeys = new Set();
     client.pendingChunkQueue = [];
     client.chunkCenter = null;
+    playerTracker.registerPlayer(client);
+    rememberPlayerState(client);
 
     console.log(`[join] ${client.username} (${address})`);
 
     client.on('end', () => {
+      closeOpenContainer(client, false);
       cancelChunkGeneration(client);
+      playerTracker.broadcastLeave(client);
+      rememberPlayerState(client);
+      saveWorld();
       console.log(`[leave] ${client.username} (${address})`);
       broadcastSystemMessage(`${client.username} left the game.`, client);
     });
@@ -927,11 +936,16 @@ function createMinecraftServer(overrides = {}) {
     syncClientChunks(client, true);
     writePositionPacket(client, bootstrapPackets.position);
     finalizeClientWorldState(client, bootstrapPackets.playerStatus);
+    playerTracker.syncPlayersForClient(client);
+    playerTracker.broadcastJoin(client);
 
     sendModifiedBlockBootstrap(client);
     itemDropManager.sendExistingDrops(client);
 
-    sendInventoryBootstrap(client);
+    playerInventoryApi.sendInventoryBootstrap(client);
+    writePlayPacket(client, 'held_item_slot', {
+      slot: client.inventoryState.selectedSlot
+    });
 
     sendMessage(
       [client],
@@ -985,6 +999,13 @@ function createMinecraftServer(overrides = {}) {
 
     const handleBlockPlacePacket = (packet) => {
       acknowledgeInteractionSequence(client, packet.sequence);
+      const targetedBlockStateId = world.getBlockState(packet.location);
+
+      if (craftingTableBlockStateId !== null && targetedBlockStateId === craftingTableBlockStateId) {
+        craftingTableApi.openCraftingTable(client, packet.location);
+        return;
+      }
+
       const placedBlockLocation = world.resolvePlacedBlockLocation(packet.location, packet.direction);
       const heldItem = getHotbarItem(client.inventoryState);
       const blockStateId = resolveBlockStateIdForItem(mcData, heldItem);
@@ -1019,30 +1040,50 @@ function createMinecraftServer(overrides = {}) {
     });
     client.on('block_dig', handleBlockDigPacket);
     client.on('block_place', handleBlockPlacePacket);
+    client.on('window_click', (packet) => {
+      if (craftingTableApi.handleWindowClick(client, packet) || playerInventoryApi.handleWindowClick(client, packet)) {
+        rememberPlayerState(client);
+        saveWorld();
+      }
+    });
+    client.on('close_window', (packet) => {
+      if (packet?.windowId === client.activeContainer?.windowId && closeOpenContainer(client, false)) {
+        saveWorld();
+      }
+    });
     client.on('position', (packet) => {
+      const previousPosition = client.playerPosition ? { ...client.playerPosition } : null;
       itemDropManager.setClientPosition(client, packet);
+      rememberPlayerState(client);
 
       if ((packet.y ?? 0) < voidRespawnY) {
         respawnPlayer(client);
         return;
       }
 
+      playerTracker.broadcastMovement(client, previousPosition);
       syncClientChunks(client);
       itemDropManager.attemptPickup(client);
     });
     client.on('position_look', (packet) => {
+      const previousPosition = client.playerPosition ? { ...client.playerPosition } : null;
       itemDropManager.setClientPosition(client, packet);
+      rememberPlayerState(client);
 
       if ((packet.y ?? 0) < voidRespawnY) {
         respawnPlayer(client);
         return;
       }
 
+      playerTracker.broadcastMovement(client, previousPosition);
       syncClientChunks(client);
       itemDropManager.attemptPickup(client);
     });
     client.on('look', (packet) => {
+      const previousPosition = client.playerPosition ? { ...client.playerPosition } : null;
       itemDropManager.setClientPosition(client, packet);
+      rememberPlayerState(client);
+      playerTracker.broadcastMovement(client, previousPosition);
       processChunkQueue(client);
       itemDropManager.attemptPickup(client);
     });
@@ -1051,6 +1092,7 @@ function createMinecraftServer(overrides = {}) {
     });
     client.on('held_item_slot', (packet) => {
       setSelectedHotbarSlot(client.inventoryState, extractSelectedSlot(packet));
+      rememberPlayerState(client);
     });
     client.on('teleport_confirm', (packet) => {
       recordTeleportConfirm(client.playerState, packet);

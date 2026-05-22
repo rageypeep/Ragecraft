@@ -21,9 +21,13 @@ Ragecraft can currently:
 - send chunk and lighting bootstrap data
 - support basic movement
 - support mining and block placement
+- support basic slash commands such as `/help`, `/spawn`, `/tp`, `/time`, and `/save`
+- load the bundled vanilla Minecraft crafting recipe set and expose `/recipes`, `/craft`, player-inventory `2x2` crafting, and crafting-table `3x3` crafting
+- track other connected players as visible entities
 - spawn visible dropped item entities and collect them on contact
-- sync a simple hotbar/inventory
+- sync the player inventory window and a basic crafting-table container flow
 - persist modified world blocks to disk
+- persist player position and inventory state across reconnects
 
 The generated world currently includes:
 
@@ -49,8 +53,10 @@ The `26.1.2` support is not native Prismarine support. Ragecraft uses `1.21.11` 
 
 Known rough edges right now:
 
-- the old severe terrain-light striping is much better than before, but thin black seam lines still appear on some slopes and cave cuts
-- the latest neighbor-aware chunk-stream lighting workaround reduced those seams further, but chunk streaming performance regressed badly and needs to be redesigned
+- the old terrain-light striping / seam artifact on `26.1.2` is fixed after chunk/light template and skylight propagation corrections
+- chunk loading performance is much better again after removing the expensive send-time lighting workaround, and the join path now avoids repeated safe-spawn scans while prewarming the spawn chunk neighborhood
+- crafting now works through the player inventory `2x2` grid, a basic `3x3` crafting-table window, and `/craft`, but richer container behavior is still missing
+- the `26.1.2` compatibility bridge is now large enough that the next protocol milestone should be native Prismarine support instead of piling on more local shims forever
 - if you are testing terrain/light changes, use a fresh save or reconnect cleanly before comparing screenshots
 
 ## Why this exists
@@ -188,7 +194,7 @@ Areas that required custom work include:
 
 Current compatibility note:
 
-- lighting is now playable enough to explore, but the remaining seam artifact and the new chunk-stream performance regression are both still active issues on the `26.1.2` path
+- the major terrain-light artifact on the `26.1.2` path is fixed, and the worst chunk-stream regression from the lighting workaround has been removed
 
 Detailed notes live in [porting/26.1.2/README.md](porting/26.1.2/README.md) and [porting/26.1.2/compatibility-report.md](porting/26.1.2/compatibility-report.md).
 
@@ -258,12 +264,11 @@ npm run generate:2612-compat-report
 
 Current high-value next steps:
 
-- larger tree variety and better density rules per biome
-- chunk-population passes for features that must cross chunk borders cleanly
-- real server-side lighting instead of the current pragmatic flat-sky approach
-- player persistence
-- commands
-- entity tracking
+- add better inventory interaction coverage such as shift-click, drag-splitting, and recipe-book sync
+- broaden container coverage beyond crafting tables into more real opened-block inventories
+- convert the current `26.1.2` compatibility bridge into a path toward native `minecraft-data` / `minecraft-protocol` support
+- keep shrinking `src/world.js` so runtime orchestration stays readable
+- continue profiling any remaining chunk-stream hitching under real multiplayer load
 
 See [TODO.md](TODO.md) for the working backlog.
 

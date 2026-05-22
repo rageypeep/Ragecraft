@@ -19,7 +19,9 @@ function toDropPosition(position) {
 function createItemDropManager({
   connectedClients,
   mcData,
-  sendInventorySlotUpdate,
+  onInventoryChanged,
+  sendInventoryState,
+  translateItemId = null,
   writePlayPacket
 }) {
   const activeDrops = new Map();
@@ -50,7 +52,7 @@ function createItemDropManager({
         value: toProtocolSlot({
           itemId: drop.itemId,
           count: drop.count
-        })
+        }, translateItemId)
       }]
     });
   }
@@ -93,7 +95,7 @@ function createItemDropManager({
           value: toProtocolSlot({
             itemId: drop.itemId,
             count: drop.count
-          })
+          }, translateItemId)
         }]
       });
     }
@@ -164,9 +166,9 @@ function createItemDropManager({
         continue;
       }
 
-      for (const slot of pickupResult.updatedSlots) {
-        sendInventorySlotUpdate(client, slot);
-      }
+      sendInventoryState?.(client);
+
+      onInventoryChanged?.(client);
 
       broadcastCollect(drop, client.id, pickupResult.inserted);
 

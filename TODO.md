@@ -4,7 +4,7 @@
 
 - [x] Investigate the underground pond/cave rendering artifact where repeated white "posts" appear under pond floors in generated terrain.
 - [x] Investigate why blocks in that underground pond/cave artifact area can sometimes be broken but not placed back, suggesting a client/server state mismatch or chunk/interaction bounds bug.
-- [ ] Investigate the remaining thin black lighting seam artifact still visible across some terrain cuts and slopes; the worst striping is mostly fixed after chunk/light template and skylight bake changes, but the final seams still need a cleaner `26.1.2` compatibility fix.
+- [x] Investigate the remaining thin black lighting seam artifact still visible across some terrain cuts and slopes; the final fix ended up being a combination of corrected chunk/light templates and better skylight propagation on top surfaces and opaque side walls.
 
 ## Next
 
@@ -60,9 +60,52 @@
 
 ## Server
 
-- [ ] Rework the latest chunk-stream lighting workaround in [src/server.js](/E:/games/MC%20server/src/server.js:709); waiting for neighboring chunks before send reduced seam severity but tanked streaming performance badly.
-- [ ] Target the remaining join hitch path, especially synchronous safe-spawn resolution and any chunk-stream warm-up stalls still visible after startup.
-- Add player persistence.
-- Add commands.
-- Add entity tracking.
+- [x] Rework the temporary chunk-stream lighting workaround in [src/server.js](/E:/games/MC%20server/src/server.js:1); the old neighbor-send gate and relight spam are gone, and chunk loading is much closer to normal again.
+- [x] Target the remaining join hitch path, especially synchronous safe-spawn resolution and any chunk-stream warm-up stalls still visible after startup.
+- [x] Add player persistence.
+- [x] Add commands.
+- [x] Add entity tracking.
 - [x] Add world save/load support.
+- [x] Turn the new vanilla recipe import and `/craft` groundwork into a basic real crafting UI flow with player-inventory packet handling.
+- [x] Expand crafting beyond the player `2x2` inventory grid with opened-container `3x3` crafting-table support.
+
+## Crafting
+
+- [ ] Expand container interactions further: shift-click, drag-splitting, and recipe-book sync.
+- [ ] Add proper container-close cleanup and item return behavior for every open inventory path, not just the current crafting table.
+- [ ] Add client-visible recipe discovery / declaration flow so the recipe book can become usable instead of only server-side matching.
+- [ ] Add more real block containers after crafting tables, starting with chest semantics and then furnace-style processing inventories.
+- [ ] Add authoritative inventory transfer rules for edge cases: full inventories, cursor overflow, invalid swaps, and disconnect/reconnect during open containers.
+- [ ] Revisit persistence around open containers so mid-session saves and unclean disconnects cannot duplicate or lose items.
+- [ ] Add gameplay smoke coverage for core recipes:
+  logs -> planks
+  planks -> crafting table
+  planks ring -> chest
+  sticks / tools / furnace / torch paths
+
+## Native 26.1.2 Port
+
+- [ ] Build a full item-id compatibility map from Mojang `26.1.2` registry reports instead of ad-hoc slot fixes, and route every slot/item-bearing packet through it consistently.
+- [ ] Audit every compatibility packet that still depends on `1.21.11` structure assumptions, especially inventory, entity metadata, recipes, tags, and registry-driven payloads.
+- [ ] Generate or import native `26.1.2` protocol metadata for Prismarine packet codecs instead of relying on the handwritten play packet remap layer.
+- [ ] Replace the local compatibility registry override path with a native `26.1.2` registry dataset once enough Mojang schema is captured.
+- [ ] Replace the local configuration-tag shim with native `26.1.2` tag data wired directly into the protocol stack.
+- [ ] Identify the minimum upstream changes needed in `minecraft-data` for native `26.1.2` support:
+  protocol.json
+  registries
+  tags
+  blocks / items / entities / menu ids
+- [ ] Identify the minimum upstream changes needed in `minecraft-protocol` for native `26.1.2` support:
+  handshake/login/config/play state definitions
+  serializer/deserializer support
+  configuration transition behavior
+  slot / item / NBT schema differences
+- [ ] Prove that Ragecraft can boot cleanly on a native `26.1.2` Prismarine base with the local compatibility rewriters disabled.
+- [ ] Remove shims in stages once native support exists:
+  packet-id remapper
+  inbound play rewriter
+  registry override loader
+  compatibility tag loader
+  item-id translator
+  block-state translator where native data makes it unnecessary
+- [ ] Upstream what can be upstreamed, then shrink local Ragecraft-only protocol code to version-specific edge cases instead of carrying a parallel stack.

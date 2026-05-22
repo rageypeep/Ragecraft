@@ -46,8 +46,29 @@ function buildRespawnPacket(loginPacket, world, copyMetadata = 0) {
   };
 }
 
-function buildPlayerBootstrapPackets(client, config, world, loginPacket) {
-  const safeSpawn = world.getSafeSpawnPosition();
+function resolvePlayerSpawn(world, persistedPlayer = null) {
+  if (
+    persistedPlayer?.position &&
+    Number.isFinite(persistedPlayer.position.x) &&
+    Number.isFinite(persistedPlayer.position.y) &&
+    Number.isFinite(persistedPlayer.position.z)
+  ) {
+    return {
+      x: persistedPlayer.position.x,
+      y: persistedPlayer.position.y,
+      z: persistedPlayer.position.z,
+      yaw: Number.isFinite(persistedPlayer.position.yaw) ? persistedPlayer.position.yaw : 0,
+      pitch: Number.isFinite(persistedPlayer.position.pitch) ? persistedPlayer.position.pitch : 0
+    };
+  }
+
+  return {
+    ...world.safeSpawn
+  };
+}
+
+function buildPlayerBootstrapPackets(client, config, world, loginPacket, persistedPlayer = null) {
+  const safeSpawn = resolvePlayerSpawn(world, persistedPlayer);
   const worldState = buildWorldState(loginPacket, world);
   const playerStatus = buildPlayerStatusPackets();
   const chunkDistance = world.streamRadius;
@@ -99,8 +120,8 @@ function buildPlayerBootstrapPackets(client, config, world, loginPacket) {
       dx: 0,
       dy: 0,
       dz: 0,
-      yaw: config.spawn.yaw,
-      pitch: config.spawn.pitch,
+      yaw: safeSpawn.yaw ?? config.spawn.yaw,
+      pitch: safeSpawn.pitch ?? config.spawn.pitch,
       flags: 0x00
     },
     respawn: buildRespawnPacket(loginPacket, world),
@@ -117,8 +138,8 @@ function buildPlayerBootstrapPackets(client, config, world, loginPacket) {
           z: safeSpawn.z
         }
       },
-      yaw: config.spawn.yaw,
-      pitch: config.spawn.pitch
+      yaw: safeSpawn.yaw ?? config.spawn.yaw,
+      pitch: safeSpawn.pitch ?? config.spawn.pitch
     },
     viewDistance: {
       viewDistance: chunkDistance
@@ -135,5 +156,6 @@ module.exports = {
   buildPlayerBootstrapPackets,
   buildRespawnPacket,
   buildWorldState,
-  createLightUpdatePacket
+  createLightUpdatePacket,
+  resolvePlayerSpawn
 };

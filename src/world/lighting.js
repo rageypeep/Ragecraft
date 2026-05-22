@@ -204,11 +204,6 @@ function softenSkyLightForChunk(targetChunk, targetChunkX, targetChunkZ, worldOp
         const position = new Vec3(localX, y, localZ);
         const stateId = targetChunk.getBlockStateId(position);
         const absorption = getSkyLightAbsorption(stateId, worldOptions, lightingLookup.translucentStateIds);
-
-        if (absorption >= 15) {
-          continue;
-        }
-
         const worldPosition = getWorldPosition(targetChunkX, localX, y, targetChunkZ, localZ);
         const currentSkyLight = targetChunk.getSkyLight(position);
         let brightestNeighbor = currentSkyLight;
@@ -228,7 +223,12 @@ function softenSkyLightForChunk(targetChunk, targetChunkX, targetChunkZ, worldOp
 
         if (brightestNeighbor > currentSkyLight) {
           targetChunk.setSkyLight(position, brightestNeighbor);
-          enqueue(localX, y, localZ);
+
+          // Fully opaque blocks can receive edge light for visible faces,
+          // but they should not act as propagation conduits.
+          if (absorption < 15) {
+            enqueue(localX, y, localZ);
+          }
         }
       }
     }
@@ -239,9 +239,15 @@ function softenSkyLightForChunk(targetChunk, targetChunkX, targetChunkZ, worldOp
     queued.delete(`${current.localX},${current.y},${current.localZ}`);
 
     const currentPosition = new Vec3(current.localX, current.y, current.localZ);
+    const currentStateId = targetChunk.getBlockStateId(currentPosition);
+    const currentAbsorption = getSkyLightAbsorption(
+      currentStateId,
+      worldOptions,
+      lightingLookup.translucentStateIds
+    );
     const currentSkyLight = targetChunk.getSkyLight(currentPosition);
 
-    if (currentSkyLight <= 1) {
+    if (currentSkyLight <= 1 || currentAbsorption >= 15) {
       continue;
     }
 
@@ -269,11 +275,6 @@ function softenSkyLightForChunk(targetChunk, targetChunkX, targetChunkZ, worldOp
       const neighborPosition = new Vec3(neighborLocalX, neighborY, neighborLocalZ);
       const neighborStateId = targetChunk.getBlockStateId(neighborPosition);
       const absorption = getSkyLightAbsorption(neighborStateId, worldOptions, lightingLookup.translucentStateIds);
-
-      if (absorption >= 15) {
-        continue;
-      }
-
       const propagatedSkyLight = Math.max(0, currentSkyLight - 1);
       const existingSkyLight = targetChunk.getSkyLight(neighborPosition);
 
@@ -282,7 +283,10 @@ function softenSkyLightForChunk(targetChunk, targetChunkX, targetChunkZ, worldOp
       }
 
       targetChunk.setSkyLight(neighborPosition, propagatedSkyLight);
-      enqueue(neighborLocalX, neighborY, neighborLocalZ);
+
+      if (absorption < 15) {
+        enqueue(neighborLocalX, neighborY, neighborLocalZ);
+      }
     }
   }
 }
