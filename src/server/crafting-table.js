@@ -2,9 +2,13 @@ const nbt = require('prismarine-nbt');
 const { addItem, incrementInventoryState, toProtocolSlot } = require('../inventory');
 const {
   applyCraftResultClick,
+  applyCraftResultQuickMove,
+  applyDragClick,
   applyOutsideClick,
+  applyQuickMoveClick,
   applyStandardSlotClick
 } = require('./inventory-clicks');
+const { applyRecipeBookSelection } = require('./recipe-book');
 
 const OUTSIDE_WINDOW_SLOT = -999;
 const CRAFTING_TABLE_INPUT_SIZE = 9;
@@ -21,6 +25,10 @@ function createCraftingTableContainer(windowId, blockPosition) {
     type: 'minecraft:crafting_table',
     windowId
   };
+}
+
+function positionsEqual(left, right) {
+  return left?.x === right?.x && left?.y === right?.y && left?.z === right?.z;
 }
 
 function getCraftingGridWindowSlot(gridIndex) {
@@ -95,6 +103,22 @@ function getCraftingTableWindowItems(client) {
   }
 
   return items;
+}
+
+function getCraftingTableQuickMoveTargets(slot) {
+  if (slot === 0 || (slot >= 1 && slot <= 9)) {
+    return Array.from({ length: 36 }, (_, index) => index + 10);
+  }
+
+  if (slot >= 10 && slot <= 36) {
+    return Array.from({ length: 9 }, (_, index) => index + 37);
+  }
+
+  if (slot >= 37 && slot <= 45) {
+    return Array.from({ length: 27 }, (_, index) => index + 10);
+  }
+
+  return [];
 }
 
 function createCraftingTableApi({
@@ -233,6 +257,60 @@ function createCraftingTableApi({
     return true;
   }
 
+  function applyRecipeSelection(client, recipe, makeAll = false) {
+    const container = client?.activeContainer;
+
+    if (!client?.inventoryState || !container || container.type !== 'minecraft:crafting_table' || !recipe) {
+      return false;
+    }
+
+    const nextCraftInput = container.craftInput.map((item) => (
+      item
+        ? {
+            itemId: item.itemId,
+            count: item.count
+          }
+        : null
+    ));
+    const nextMain = client.inventoryState.main.map((item) => (
+      item
+        ? {
+            itemId: item.itemId,
+            count: item.count
+          }
+        : null
+    ));
+    const nextHotbar = client.inventoryState.hotbar.map((item) => (
+      item
+        ? {
+            itemId: item.itemId,
+            count: item.count
+          }
+        : null
+    ));
+    const applied = applyRecipeBookSelection({
+      grid: nextCraftInput,
+      gridHeight: 3,
+      gridWidth: 3,
+      makeAll,
+      mcData,
+      recipe,
+      storageSections: [nextMain, nextHotbar]
+    });
+
+    if (!applied.applied) {
+      return false;
+    }
+
+    container.craftInput = nextCraftInput;
+    client.inventoryState.main = nextMain;
+    client.inventoryState.hotbar = nextHotbar;
+    recomputeCraftingTableResult(client);
+    incrementInventoryState(container);
+    sendCraftingTableState(client);
+    return true;
+  }
+
   function handleWindowClick(client, packet) {
     const container = client?.activeContainer;
 
@@ -241,8 +319,10 @@ function createCraftingTableApi({
     }
 
     let changed = false;
+    let handled = false;
 
     if (packet.mode === 0) {
+      handled = true;
       if (packet.slot === OUTSIDE_WINDOW_SLOT) {
         changed = applyOutsideClick({
           getCursorItem() {
@@ -295,9 +375,96 @@ function createCraftingTableApi({
           recomputeCraftingTableResult(client);
         }
       }
+    } else if (packet.mode === 1 && packet.slot >= 0 && packet.slot < CRAFTING_TABLE_WINDOW_SLOT_COUNT) {
+      handled = true;
+
+      if (packet.slot === 0) {
+        const result = applyCraftResultQuickMove({
+          decrementMatchedInputs(matchedSlots) {
+            decrementCraftingInputs(client, matchedSlots);
+          },
+          getResultItem() {
+            return client.activeContainer?.craftResult ?? null;
+          },
+          getSlotItem(slot) {
+            return getCraftingTableWindowSlotItem(client, slot);
+          },
+          mcData,
+          recomputeCraftingResult() {
+            return recomputeCraftingTableResult(client);
+          },
+          setSlotItem(slot, item) {
+            setCraftingTableWindowSlotItem(client, slot, item);
+          },
+          targetSlots: Array.from({ length: 36 }, (_, index) => index + 10)
+        });
+        changed = result.changed;
+      } else {
+        const result = applyQuickMoveClick({
+          getSlotItem(slot) {
+            return getCraftingTableWindowSlotItem(client, slot);
+          },
+          mcData,
+          setSlotItem(slot, item) {
+            setCraftingTableWindowSlotItem(client, slot, item);
+          },
+          slot: packet.slot,
+          targetSlots: getCraftingTableQuickMoveTargets(packet.slot)
+        });
+        changed = result.changed;
+
+        if (changed && packet.slot >= 1 && packet.slot <= 9) {
+          recomputeCraftingTableResult(client);
+        }
+      }
+    } else if (packet.mode === 5) {
+      const result = applyDragClick({
+        clearDragState() {
+          client.dragState = null;
+        },
+        getCursorItem() {
+          return client.inventoryState.cursor;
+        },
+        getDragState() {
+          return client.dragState?.windowId === container.windowId ? client.dragState : null;
+        },
+        getSlotItem(slot) {
+          return getCraftingTableWindowSlotItem(client, slot);
+        },
+        isSlotAllowed(slot) {
+          return slot >= 1 && slot < CRAFTING_TABLE_WINDOW_SLOT_COUNT;
+        },
+        mcData,
+        mouseButton: packet.mouseButton,
+        setCursorItem(item) {
+          client.inventoryState.cursor = item;
+        },
+        setDragState(state) {
+          client.dragState = state
+            ? {
+                ...state,
+                windowId: container.windowId
+              }
+            : null;
+        },
+        setSlotItem(slot, item) {
+          setCraftingTableWindowSlotItem(client, slot, item);
+        },
+        slot: packet.slot
+      });
+      handled = result.handled;
+      changed = result.changed;
+
+      if (changed && result.changedSlots.some((slot) => slot >= 1 && slot <= 9)) {
+        recomputeCraftingTableResult(client);
+      }
     }
 
     if (!changed) {
+      if (!handled) {
+        return false;
+      }
+
       sendCraftingTableState(client);
       return false;
     }
@@ -311,7 +478,17 @@ function createCraftingTableApi({
     closeActiveWindow,
     commitVisibleInventoryChange,
     handleWindowClick,
+    isCraftingTableAffected(client, positions = []) {
+      const blockPosition = client?.activeContainer?.blockPosition;
+
+      if (!blockPosition || client.activeContainer?.type !== 'minecraft:crafting_table') {
+        return false;
+      }
+
+      return positions.some((position) => positionsEqual(position, blockPosition));
+    },
     openCraftingTable,
+    applyRecipeSelection,
     recomputeCraftingTableResult,
     sendCraftingTableState
   };

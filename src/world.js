@@ -1,3 +1,5 @@
+const fs = require('node:fs');
+const path = require('node:path');
 const biomes = require('./biomes');
 const {
   createChunkLightTemplate,
@@ -5,6 +7,7 @@ const {
   createChunkTemplate,
   createTranslatedChunk
 } = require('./world/chunks');
+const { createChestStateHelpers } = require('./world/chests');
 const { createChunkFromJson } = require('./world/chunk-factory');
 const { createFluidHelpers } = require('./world/fluids');
 const { collectLightingChunkCoordinates } = require('./world/light-runtime');
@@ -53,6 +56,41 @@ function hashSeedValue(seedHash, salt) {
   value = Math.imul(value, 3266489917) >>> 0;
   value ^= value >>> 16;
   return value >>> 0;
+}
+
+function loadCompatibilityRegistriesReport(version) {
+  if (!version) {
+    return null;
+  }
+
+  const candidatePaths = [
+    path.join(__dirname, '..', 'porting', version, 'generated-reports', 'reports', 'registries.json'),
+    path.join(__dirname, '..', 'porting', version, 'generated-reports-2', 'reports', 'registries.json')
+  ];
+
+  for (const candidatePath of candidatePaths) {
+    if (fs.existsSync(candidatePath)) {
+      return JSON.parse(fs.readFileSync(candidatePath, 'utf8'));
+    }
+  }
+
+  return null;
+}
+
+function resolveBlockEntityTypeIds(version) {
+  const registriesReport = loadCompatibilityRegistriesReport(version);
+  const blockEntityEntries = registriesReport?.['minecraft:block_entity_type']?.entries ?? {};
+  const chestTypeId = blockEntityEntries['minecraft:chest']?.protocol_id;
+  const furnaceTypeId = blockEntityEntries['minecraft:furnace']?.protocol_id;
+  const blastFurnaceTypeId = blockEntityEntries['minecraft:blast_furnace']?.protocol_id;
+  const smokerTypeId = blockEntityEntries['minecraft:smoker']?.protocol_id;
+
+  return {
+    chest: Number.isInteger(chestTypeId) ? chestTypeId : 1,
+    furnace: Number.isInteger(furnaceTypeId) ? furnaceTypeId : null,
+    blast_furnace: Number.isInteger(blastFurnaceTypeId) ? blastFurnaceTypeId : null,
+    smoker: Number.isInteger(smokerTypeId) ? smokerTypeId : null
+  };
 }
 
 function resolveSpawnReference(config, worldOptions) {
@@ -112,6 +150,32 @@ function createInitialWorldPackets(mcData, config, savedWorldState = { blocks: [
   const minBuildY = worldOptions.minWorldY;
   const waterSourceStateId = worldOptions.terrainBlockStateIds.water;
   const maxWaterStateId = worldOptions.terrainBlockStateIds.waterMax;
+  const chestItemId = mcData.itemsByName.chest?.id ?? null;
+  const blockEntityTypeIds = resolveBlockEntityTypeIds(config.version);
+  const thinSnowMinStateId = mcData.blocksByName.snow?.minStateId ?? null;
+  const thinSnowMaxStateId = mcData.blocksByName.snow?.maxStateId ?? null;
+  const chestStateHelpers = createChestStateHelpers(mcData);
+  const processingBlockDefinitions = [
+    {
+      containerType: 'minecraft:furnace',
+      itemId: mcData.itemsByName.furnace?.id ?? null,
+      maxStateId: mcData.blocksByName.furnace?.maxStateId ?? null,
+      minStateId: mcData.blocksByName.furnace?.minStateId ?? null
+    },
+    {
+      containerType: 'minecraft:blast_furnace',
+      itemId: mcData.itemsByName.blast_furnace?.id ?? null,
+      maxStateId: mcData.blocksByName.blast_furnace?.maxStateId ?? null,
+      minStateId: mcData.blocksByName.blast_furnace?.minStateId ?? null
+    },
+    {
+      containerType: 'minecraft:smoker',
+      itemId: mcData.itemsByName.smoker?.id ?? null,
+      maxStateId: mcData.blocksByName.smoker?.maxStateId ?? null,
+      minStateId: mcData.blocksByName.smoker?.minStateId ?? null
+    }
+  ].filter((entry) => Number.isInteger(entry.minStateId) && Number.isInteger(entry.maxStateId));
+  const processingContainerTypes = new Set(processingBlockDefinitions.map((entry) => entry.containerType));
 
   function shouldPerformImmediateLightUpdate(previousStateId, nextStateId) {
     const previousBlock = mcData.blocksByStateId[previousStateId];
@@ -121,6 +185,14 @@ function createInitialWorldPackets(mcData, config, savedWorldState = { blocks: [
       (previousBlock?.emitLight ?? 0) > 0 ||
       (nextBlock?.emitLight ?? 0) > 0
     );
+  }
+
+  function isReplaceablePlacementStateId(stateId) {
+    return Number.isInteger(stateId) &&
+      thinSnowMinStateId !== null &&
+      thinSnowMaxStateId !== null &&
+      stateId >= thinSnowMinStateId &&
+      stateId <= thinSnowMaxStateId;
   }
 
   function isWithinPlatformBounds(position) {
@@ -153,6 +225,7 @@ function createInitialWorldPackets(mcData, config, savedWorldState = { blocks: [
   const stateHelpers = createWorldStateHelpers({
     airBlockStateId,
     bakeChunkLightingRegion,
+    blockEntityTypeIds,
     chunkWorkerPool,
     collectLightingChunkCoordinates,
     createChunkFromJson,
@@ -166,6 +239,7 @@ function createInitialWorldPackets(mcData, config, savedWorldState = { blocks: [
     isWithinBuildBounds,
     normalizePosition,
     savedBlocks: savedWorldState.blocks ?? [],
+    savedContainers: savedWorldState.containers ?? [],
     spawnReference,
     surfaceY,
     toChunkCoordinates,
@@ -208,6 +282,361 @@ function createInitialWorldPackets(mcData, config, savedWorldState = { blocks: [
     getBlockDefinition: (stateId) => mcData.blocksByStateId[stateId]
   });
 
+  const {
+    getDoubleChestSides,
+    isChestStateId,
+    offsetPosition,
+    parseChestState,
+    positionsEqual,
+    resolveChestStateId
+  } = chestStateHelpers;
+
+  function cloneItemStack(item) {
+    return item
+      ? {
+          itemId: item.itemId,
+          count: item.count
+        }
+      : null;
+  }
+
+  function createEmptyChestItems(size = 27) {
+    return new Array(size).fill(null);
+  }
+
+  function createEmptyProcessingItems() {
+    return new Array(3).fill(null);
+  }
+
+  function createDefaultProcessingData() {
+    return {
+      burnTime: 0,
+      cookTime: 0,
+      cookTimeTotal: 0,
+      fuelTime: 0
+    };
+  }
+
+  function splitChestItems(items = [], start, end) {
+    return Array.from({ length: end - start }, (_, index) => cloneItemStack(items[start + index] ?? null));
+  }
+
+  function getChestRecord(position) {
+    const record = stateHelpers.getContainerAt(position);
+    return record?.type === 'chest' ? record : null;
+  }
+
+  function getProcessingBlockDefinitionByStateId(stateId) {
+    if (!Number.isInteger(stateId)) {
+      return null;
+    }
+
+    return processingBlockDefinitions.find((entry) =>
+      stateId >= entry.minStateId && stateId <= entry.maxStateId) ?? null;
+  }
+
+  function getProcessingRecord(position) {
+    const record = stateHelpers.getContainerAt(position);
+    return processingContainerTypes.has(record?.type) ? record : null;
+  }
+
+  function ensureProcessingRecord(position, containerType) {
+    const existingRecord = getProcessingRecord(position);
+
+    if (existingRecord) {
+      if (existingRecord.items.length !== 3) {
+        stateHelpers.setContainerItems(existingRecord, createEmptyProcessingItems());
+      }
+
+      stateHelpers.setContainerPositions(existingRecord, [position]);
+      stateHelpers.setContainerData(existingRecord, {
+        ...createDefaultProcessingData(),
+        ...(existingRecord.data ?? {})
+      });
+      return existingRecord;
+    }
+
+    return stateHelpers.createContainer(
+      containerType,
+      [position],
+      createEmptyProcessingItems(),
+      createDefaultProcessingData()
+    );
+  }
+
+  function ensureSingleChestRecord(position) {
+    const existingRecord = getChestRecord(position);
+
+    if (existingRecord) {
+      if (existingRecord.items.length !== 27) {
+        stateHelpers.setContainerItems(existingRecord, splitChestItems(existingRecord.items, 0, 27));
+      }
+
+      stateHelpers.setContainerPositions(existingRecord, [position]);
+      return existingRecord;
+    }
+
+    return stateHelpers.createContainer('chest', [position], createEmptyChestItems(27));
+  }
+
+  function getAdjacentChestPositions(position) {
+    return ['north', 'south', 'west', 'east']
+      .map((direction) => offsetPosition(position, direction))
+      .filter(Boolean)
+      .filter((neighborPosition) => isChestStateId(stateHelpers.getBlockState(neighborPosition)));
+  }
+
+  function getHalfItems(record, side) {
+    if (!record) {
+      return createEmptyChestItems(27);
+    }
+
+    if (record.items.length <= 27) {
+      return splitChestItems(record.items, 0, 27);
+    }
+
+    return side === 'left'
+      ? splitChestItems(record.items, 0, 27)
+      : splitChestItems(record.items, 27, 54);
+  }
+
+  function mergeChestRecords(facing, leftPosition, rightPosition) {
+    const leftRecord = ensureSingleChestRecord(leftPosition);
+    const rightRecord = ensureSingleChestRecord(rightPosition);
+    const mergedItems = [
+      ...getHalfItems(leftRecord, 'left'),
+      ...getHalfItems(rightRecord, 'right')
+    ];
+
+    if (rightRecord !== leftRecord) {
+      stateHelpers.deleteContainer(rightRecord);
+    }
+
+    stateHelpers.setContainerItems(leftRecord, mergedItems);
+    stateHelpers.setContainerPositions(leftRecord, [leftPosition, rightPosition]);
+
+    stateHelpers.setBlockState(leftPosition, resolveChestStateId({ facing, type: 'left', waterlogged: false }));
+    stateHelpers.setBlockState(rightPosition, resolveChestStateId({ facing, type: 'right', waterlogged: false }));
+    return leftRecord;
+  }
+
+  function splitDoubleChestRecord(record, removedPosition, remainingPosition, facing, removedType) {
+    const removedItems = removedType === 'left'
+      ? getHalfItems(record, 'left')
+      : getHalfItems(record, 'right');
+    const remainingItems = removedType === 'left'
+      ? getHalfItems(record, 'right')
+      : getHalfItems(record, 'left');
+
+    stateHelpers.setContainerItems(record, remainingItems);
+    stateHelpers.setContainerPositions(record, [remainingPosition]);
+    stateHelpers.setBlockState(remainingPosition, resolveChestStateId({ facing, type: 'single', waterlogged: false }));
+
+    return removedItems.filter(Boolean);
+  }
+
+  function resolveChestFacingFromYaw(yaw = 0) {
+    const normalizedYaw = ((yaw % 360) + 360) % 360;
+
+    if (normalizedYaw >= 45 && normalizedYaw < 135) {
+      return 'east';
+    }
+
+    if (normalizedYaw >= 135 && normalizedYaw < 225) {
+      return 'north';
+    }
+
+    if (normalizedYaw >= 225 && normalizedYaw < 315) {
+      return 'west';
+    }
+
+    return 'south';
+  }
+
+  function resolvePlacedChestFacing(playerYaw = 0) {
+    const playerFacing = resolveChestFacingFromYaw(playerYaw);
+
+    switch (playerFacing) {
+      case 'north':
+        return 'south';
+      case 'south':
+        return 'north';
+      case 'west':
+        return 'east';
+      case 'east':
+      default:
+        return 'west';
+    }
+  }
+
+  function getChestInteraction(position) {
+    const state = parseChestState(stateHelpers.getBlockState(position));
+
+    if (!state) {
+      return null;
+    }
+
+    const record = getChestRecord(position) ?? ensureSingleChestRecord(position);
+
+    return {
+      positions: record.positions.map((entry) => ({ ...entry })),
+      record,
+      size: record.items.length,
+      state
+    };
+  }
+
+  function getProcessingInteraction(position) {
+    const normalizedPosition = normalizePosition(position);
+    const blockDefinition = getProcessingBlockDefinitionByStateId(stateHelpers.getBlockState(normalizedPosition));
+
+    if (!blockDefinition) {
+      return null;
+    }
+
+    return {
+      blockPosition: normalizedPosition,
+      record: ensureProcessingRecord(normalizedPosition, blockDefinition.containerType),
+      type: blockDefinition.containerType
+    };
+  }
+
+  function placeChestDetailed(position, playerYaw = 0) {
+    const normalizedPosition = normalizePosition(position);
+
+    if (!isWithinBuildBounds(normalizedPosition)) {
+      return false;
+    }
+
+    const currentStateId = stateHelpers.getBlockState(normalizedPosition);
+
+    if (currentStateId !== airBlockStateId && !isWaterStateId(currentStateId) && !isReplaceablePlacementStateId(currentStateId)) {
+      return false;
+    }
+
+    const adjacentChestPositions = getAdjacentChestPositions(normalizedPosition);
+    const eligibleNeighbors = adjacentChestPositions.filter((neighborPosition) => {
+      const neighborState = parseChestState(stateHelpers.getBlockState(neighborPosition));
+      return neighborState?.type === 'single';
+    });
+    const joinNeighbor = eligibleNeighbors.length === 1 ? eligibleNeighbors[0] : null;
+    const chestFacing = joinNeighbor
+      ? parseChestState(stateHelpers.getBlockState(joinNeighbor))?.facing ?? resolvePlacedChestFacing(playerYaw)
+      : resolvePlacedChestFacing(playerYaw);
+    const singleChestStateId = resolveChestStateId({
+      facing: chestFacing,
+      type: 'single',
+      waterlogged: false
+    });
+
+    if (!stateHelpers.setBlockState(normalizedPosition, singleChestStateId)) {
+      return false;
+    }
+
+    ensureSingleChestRecord(normalizedPosition);
+    const changedPositions = [normalizedPosition];
+
+    if (joinNeighbor) {
+      const doubleChestSides = getDoubleChestSides(chestFacing, normalizedPosition, joinNeighbor);
+
+      if (doubleChestSides) {
+        mergeChestRecords(
+          chestFacing,
+          doubleChestSides.leftPosition,
+          doubleChestSides.rightPosition
+        );
+        changedPositions.push(joinNeighbor);
+      }
+    }
+
+    const lightChunkCoordinates = shouldPerformImmediateLightUpdate(currentStateId, singleChestStateId)
+      ? stateHelpers.rebakeLightingForPositions(changedPositions)
+      : [];
+
+    return {
+      changedPositions,
+      lightChunkCoordinates,
+      position: normalizedPosition,
+      stateId: stateHelpers.getBlockState(normalizedPosition)
+    };
+  }
+
+  function breakChestDetailed(position, stateId) {
+    const normalizedPosition = normalizePosition(position);
+    const chestState = parseChestState(stateId);
+    const record = getChestRecord(normalizedPosition) ?? ensureSingleChestRecord(normalizedPosition);
+    const originalPositions = record.positions.map((entry) => ({ ...entry }));
+    const droppedItems = [];
+
+    if (record.items.length > 27 && chestState?.type !== 'single' && originalPositions.length === 2) {
+      const remainingPosition = originalPositions.find((entry) => !positionsEqual(entry, normalizedPosition));
+
+      if (remainingPosition) {
+        droppedItems.push(...splitDoubleChestRecord(
+          record,
+          normalizedPosition,
+          remainingPosition,
+          chestState.facing,
+          chestState.type
+        ));
+      }
+    } else {
+      droppedItems.push(...record.items.filter(Boolean).map(cloneItemStack));
+      stateHelpers.deleteContainer(record);
+    }
+
+    stateHelpers.setBlockState(normalizedPosition, airBlockStateId);
+
+    if (Number.isInteger(chestItemId)) {
+      droppedItems.push({
+        itemId: chestItemId,
+        count: 1
+      });
+    }
+
+    const changedPositions = [normalizedPosition, ...originalPositions.filter((entry) => !positionsEqual(entry, normalizedPosition))];
+    const lightChunkCoordinates = shouldPerformImmediateLightUpdate(stateId, airBlockStateId)
+      ? stateHelpers.rebakeLightingForPositions(changedPositions)
+      : [];
+
+    return {
+      changedPositions,
+      droppedItems,
+      lightChunkCoordinates,
+      position: normalizedPosition,
+      stateId
+    };
+  }
+
+  function breakProcessingDetailed(position, stateId, blockDefinition) {
+    const normalizedPosition = normalizePosition(position);
+    const record = getProcessingRecord(normalizedPosition) ??
+      ensureProcessingRecord(normalizedPosition, blockDefinition.containerType);
+    const droppedItems = record.items.filter(Boolean).map(cloneItemStack);
+
+    stateHelpers.deleteContainer(record);
+    stateHelpers.setBlockState(normalizedPosition, airBlockStateId);
+
+    if (Number.isInteger(blockDefinition.itemId)) {
+      droppedItems.push({
+        itemId: blockDefinition.itemId,
+        count: 1
+      });
+    }
+
+    const lightChunkCoordinates = shouldPerformImmediateLightUpdate(stateId, airBlockStateId)
+      ? stateHelpers.rebakeLightingForPositions([normalizedPosition])
+      : [];
+
+    return {
+      changedPositions: [normalizedPosition],
+      droppedItems,
+      lightChunkCoordinates,
+      position: normalizedPosition,
+      stateId
+    };
+  }
+
   function breakBlock(position) {
     if (!isWithinBuildBounds(position)) {
       return null;
@@ -217,6 +646,16 @@ function createInitialWorldPackets(mcData, config, savedWorldState = { blocks: [
 
     if (currentStateId === airBlockStateId) {
       return null;
+    }
+
+    if (isChestStateId(currentStateId)) {
+      return breakChestDetailed(position, currentStateId);
+    }
+
+    const processingBlockDefinition = getProcessingBlockDefinitionByStateId(currentStateId);
+
+    if (processingBlockDefinition) {
+      return breakProcessingDetailed(position, currentStateId, processingBlockDefinition);
     }
 
     const blockDefinition = mcData.blocksByStateId[currentStateId];
@@ -252,12 +691,22 @@ function createInitialWorldPackets(mcData, config, savedWorldState = { blocks: [
 
     const currentStateId = stateHelpers.getBlockState(normalizedPosition);
 
-    if (currentStateId !== airBlockStateId && !isWaterStateId(currentStateId)) {
+    if (
+      currentStateId !== airBlockStateId &&
+      !isWaterStateId(currentStateId) &&
+      !isReplaceablePlacementStateId(currentStateId)
+    ) {
       return false;
     }
 
     if (!stateHelpers.setBlockState(normalizedPosition, stateId)) {
       return false;
+    }
+
+    const processingBlockDefinition = getProcessingBlockDefinitionByStateId(stateId);
+
+    if (processingBlockDefinition) {
+      ensureProcessingRecord(normalizedPosition, processingBlockDefinition.containerType);
     }
 
     const changedPositions = [normalizedPosition, ...recomputeWaterAround(normalizedPosition)];
@@ -289,6 +738,10 @@ function createInitialWorldPackets(mcData, config, savedWorldState = { blocks: [
       return null;
     }
 
+    if (isReplaceablePlacementStateId(stateHelpers.getBlockState(normalizedPosition))) {
+      return normalizedPosition;
+    }
+
     return {
       x: normalizedPosition.x + offset.x,
       y: normalizedPosition.y + offset.y,
@@ -310,9 +763,15 @@ function createInitialWorldPackets(mcData, config, savedWorldState = { blocks: [
       return stateHelpers.getBiomeId(position, worldOptions.biomeId);
     },
     getBlockState: stateHelpers.getBlockState,
+    getChestInteraction,
     getChunkLightUpdate: stateHelpers.getChunkLightUpdate,
     getChunkPacket: stateHelpers.getChunkPacket,
     getChunkPackets: stateHelpers.getChunkPackets,
+    getContainers: stateHelpers.getContainers,
+    getContainersInChunk: stateHelpers.getContainersInChunk,
+    getContainerAt: stateHelpers.getContainerAt,
+    blockEntityTypeIds,
+    getProcessingInteraction,
     getSafeSpawnPosition,
     isWithinBuildBounds,
     isWithinPlatformBounds,
@@ -325,11 +784,14 @@ function createInitialWorldPackets(mcData, config, savedWorldState = { blocks: [
     minWorldY: worldOptions.minWorldY,
     placementBlockStateId,
     placeBlock,
+    placeChestDetailed,
     placeBlockDetailed,
     resolvePlacedBlockLocation,
     getModifiedBlocks: stateHelpers.getModifiedBlocks,
+    setContainerData: stateHelpers.setContainerData,
     serialize: stateHelpers.serialize,
     setBlockState: stateHelpers.setBlockState,
+    setContainerItems: stateHelpers.setContainerItems,
     surfaceY,
     surfacePaletteStateIds: [
       worldOptions.surfaceBlockStateId,

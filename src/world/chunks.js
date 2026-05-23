@@ -111,11 +111,11 @@ function encodeChunkData(chunk, worldOptions) {
   return buffer.toBuffer();
 }
 
-function createChunkTemplate(chunk, surfaceY, worldOptions) {
+function createChunkTemplate(chunk, surfaceY, worldOptions, blockEntities = []) {
   return {
     heightmaps: createHeightmapData(chunk, surfaceY),
     chunkData: encodeChunkData(chunk, worldOptions),
-    blockEntities: []
+    blockEntities
   };
 }
 

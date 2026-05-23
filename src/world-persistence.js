@@ -23,9 +23,73 @@ function normalizeInventoryItems(items, expectedLength = null) {
   return Array.from({ length: expectedLength }, (_, index) => normalized[index] ?? null);
 }
 
+function normalizeContainerPositions(positions) {
+  return Array.isArray(positions)
+    ? positions
+        .filter((position) =>
+          position &&
+          Number.isInteger(position.x) &&
+          Number.isInteger(position.y) &&
+          Number.isInteger(position.z)
+        )
+        .map((position) => ({
+          x: position.x,
+          y: position.y,
+          z: position.z
+        }))
+    : [];
+}
+
+function normalizeContainerData(value) {
+  if (Array.isArray(value)) {
+    return value.map((entry) => normalizeContainerData(entry));
+  }
+
+  if (value && typeof value === 'object') {
+    const normalized = {};
+
+    for (const [key, entry] of Object.entries(value)) {
+      const normalizedEntry = normalizeContainerData(entry);
+
+      if (normalizedEntry !== undefined) {
+        normalized[key] = normalizedEntry;
+      }
+    }
+
+    return normalized;
+  }
+
+  if (
+    value === null ||
+    typeof value === 'string' ||
+    typeof value === 'boolean' ||
+    Number.isFinite(value)
+  ) {
+    return value;
+  }
+
+  return undefined;
+}
+
+function normalizeContainers(rawContainers) {
+  if (!Array.isArray(rawContainers)) {
+    return [];
+  }
+
+  return rawContainers
+    .filter((container) => container && typeof container === 'object' && typeof container.type === 'string')
+    .map((container) => ({
+      type: container.type,
+      positions: normalizeContainerPositions(container.positions),
+      items: normalizeInventoryItems(container.items),
+      data: normalizeContainerData(container.data) ?? {}
+    }))
+    .filter((container) => container.positions.length > 0);
+}
+
 function normalizeWorldState(rawWorldState) {
   if (!rawWorldState || typeof rawWorldState !== 'object') {
-    return { blocks: [], players: {} };
+    return { blocks: [], containers: [], players: {} };
   }
 
   const normalizedPlayers = {};
@@ -86,13 +150,14 @@ function normalizeWorldState(rawWorldState) {
             stateId: block.stateId
           }))
       : [],
+    containers: normalizeContainers(rawWorldState.containers),
     players: normalizedPlayers
   };
 }
 
 function loadWorldState(worldSavePath) {
   if (!worldSavePath || !fs.existsSync(worldSavePath)) {
-    return { blocks: [], players: {} };
+    return { blocks: [], containers: [], players: {} };
   }
 
   const rawContents = fs.readFileSync(worldSavePath, 'utf8');

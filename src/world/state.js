@@ -2,6 +2,7 @@ function createWorldStateHelpers(options) {
   const {
     airBlockStateId,
     bakeChunkLightingRegion,
+    blockEntityTypeIds = {},
     chunkWorkerPool,
     collectLightingChunkCoordinates,
     createChunkFromJson,
@@ -15,6 +16,7 @@ function createWorldStateHelpers(options) {
     isWithinBuildBounds,
     normalizePosition,
     savedBlocks = [],
+    savedContainers = [],
     spawnReference,
     surfaceY,
     toChunkCoordinates,
@@ -24,6 +26,144 @@ function createWorldStateHelpers(options) {
   const chunks = new Map();
   const generatedChunks = new Map();
   const modifiedBlocks = new Map();
+  const containerRecords = new Map();
+  const containerIndex = new Map();
+  let nextContainerId = 1;
+
+  function normalizeContainerPositions(positions) {
+    return Array.isArray(positions)
+      ? positions
+          .map((position) => normalizePosition(position))
+          .filter(Boolean)
+      : [];
+  }
+
+  function normalizeContainerItems(items) {
+    return Array.isArray(items)
+      ? items.map((item) => (
+          item &&
+          Number.isInteger(item.itemId) &&
+          Number.isInteger(item.count) &&
+          item.count > 0
+            ? {
+                itemId: item.itemId,
+                count: item.count
+              }
+            : null
+        ))
+      : [];
+  }
+
+  function cloneContainerItems(items) {
+    return items.map((item) => (
+      item
+        ? {
+            itemId: item.itemId,
+            count: item.count
+          }
+        : null
+    ));
+  }
+
+  function normalizeContainerData(data) {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      return {};
+    }
+
+    const normalized = {};
+
+    for (const [key, value] of Object.entries(data)) {
+      if (
+        value === null ||
+        typeof value === 'string' ||
+        typeof value === 'boolean' ||
+        Number.isFinite(value)
+      ) {
+        normalized[key] = value;
+      }
+    }
+
+    return normalized;
+  }
+
+  function cloneContainerData(data) {
+    return normalizeContainerData(data);
+  }
+
+  function unindexContainer(record) {
+    for (const position of record.positions ?? []) {
+      containerIndex.delete(getBlockKey(position));
+    }
+  }
+
+  function indexContainer(record) {
+    for (const position of record.positions ?? []) {
+      containerIndex.set(getBlockKey(position), record.id);
+    }
+  }
+
+  function createContainer(type, positions, items = [], data = {}) {
+    const record = {
+      id: nextContainerId++,
+      type,
+      positions: normalizeContainerPositions(positions),
+      items: normalizeContainerItems(items),
+      data: normalizeContainerData(data)
+    };
+
+    containerRecords.set(record.id, record);
+    indexContainer(record);
+    return record;
+  }
+
+  function getContainerAt(position) {
+    const normalizedPosition = normalizePosition(position);
+
+    if (!normalizedPosition) {
+      return null;
+    }
+
+    const recordId = containerIndex.get(getBlockKey(normalizedPosition));
+    return Number.isInteger(recordId) ? containerRecords.get(recordId) ?? null : null;
+  }
+
+  function setContainerPositions(record, positions) {
+    if (!record) {
+      return false;
+    }
+
+    unindexContainer(record);
+    record.positions = normalizeContainerPositions(positions);
+    indexContainer(record);
+    return true;
+  }
+
+  function setContainerItems(record, items) {
+    if (!record) {
+      return false;
+    }
+
+    record.items = normalizeContainerItems(items);
+    return true;
+  }
+
+  function setContainerData(record, data) {
+    if (!record) {
+      return false;
+    }
+
+    record.data = normalizeContainerData(data);
+    return true;
+  }
+
+  function deleteContainer(record) {
+    if (!record) {
+      return false;
+    }
+
+    unindexContainer(record);
+    return containerRecords.delete(record.id);
+  }
 
   function createChunkEntry(chunkX, chunkZ) {
     return {
@@ -251,10 +391,16 @@ function createWorldStateHelpers(options) {
 
   function getCachedChunkTemplate(chunkEntry, translateStateId = null) {
     materializeChunkEntry(chunkEntry);
+    const blockEntities = createChunkBlockEntities(chunkEntry.chunkX, chunkEntry.chunkZ);
 
     if (typeof translateStateId !== 'function') {
       if (!chunkEntry.packetTemplate) {
-        chunkEntry.packetTemplate = createChunkTemplate(chunkEntry.chunk, surfaceY, worldOptions);
+        chunkEntry.packetTemplate = createChunkTemplate(
+          chunkEntry.chunk,
+          surfaceY,
+          worldOptions,
+          blockEntities
+        );
       }
 
       return chunkEntry.packetTemplate;
@@ -268,7 +414,12 @@ function createWorldStateHelpers(options) {
       const translatedChunk = createTranslatedChunk(chunkEntry.chunk, translateStateId);
       chunkEntry.translatedPacketTemplates.set(
         translateStateId,
-        createChunkTemplate(translatedChunk, surfaceY, worldOptions)
+        createChunkTemplate(
+          translatedChunk,
+          surfaceY,
+          worldOptions,
+          blockEntities
+        )
       );
     }
 
@@ -381,9 +532,100 @@ function createWorldStateHelpers(options) {
     return packets;
   }
 
+  function getContainersInChunk(chunkX, chunkZ, type = null) {
+    const chunkMinX = chunkX * 16;
+    const chunkMaxX = chunkMinX + 15;
+    const chunkMinZ = chunkZ * 16;
+    const chunkMaxZ = chunkMinZ + 15;
+    const matches = [];
+
+    for (const record of containerRecords.values()) {
+      if (type && record.type !== type) {
+        continue;
+      }
+
+      if (!record.positions?.some((position) =>
+        position.x >= chunkMinX &&
+        position.x <= chunkMaxX &&
+        position.z >= chunkMinZ &&
+        position.z <= chunkMaxZ
+      )) {
+        continue;
+      }
+
+      matches.push(record);
+    }
+
+    return matches;
+  }
+
+  function getContainers(type = null) {
+    const matches = [];
+
+    for (const record of containerRecords.values()) {
+      if (type && record.type !== type) {
+        continue;
+      }
+
+      matches.push(record);
+    }
+
+    return matches;
+  }
+
+  function createChunkBlockEntities(chunkX, chunkZ) {
+    const chunkMinX = chunkX * 16;
+    const chunkMaxX = chunkMinX + 15;
+    const chunkMinZ = chunkZ * 16;
+    const chunkMaxZ = chunkMinZ + 15;
+    const blockEntities = [];
+
+    const containerTypeIds = {
+      chest: blockEntityTypeIds.chest,
+      'minecraft:blast_furnace': blockEntityTypeIds.blast_furnace,
+      'minecraft:furnace': blockEntityTypeIds.furnace,
+      'minecraft:smoker': blockEntityTypeIds.smoker
+    };
+
+    for (const record of getContainersInChunk(chunkX, chunkZ)) {
+      const blockEntityTypeId = containerTypeIds[record.type];
+
+      if (!Number.isInteger(blockEntityTypeId)) {
+        continue;
+      }
+
+      for (const position of record.positions ?? []) {
+        if (
+          position.x < chunkMinX ||
+          position.x > chunkMaxX ||
+          position.z < chunkMinZ ||
+          position.z > chunkMaxZ
+        ) {
+          continue;
+        }
+
+        blockEntities.push({
+          x: position.x & 15,
+          y: position.y,
+          z: position.z & 15,
+          type: blockEntityTypeId,
+          nbtData: undefined
+        });
+      }
+    }
+
+    return blockEntities;
+  }
+
   function serialize() {
     return {
-      blocks: Array.from(modifiedBlocks.values())
+      blocks: Array.from(modifiedBlocks.values()),
+      containers: Array.from(containerRecords.values()).map((record) => ({
+        type: record.type,
+        positions: normalizeContainerPositions(record.positions),
+        items: cloneContainerItems(record.items),
+        data: cloneContainerData(record.data)
+      }))
     };
   }
 
@@ -400,24 +642,36 @@ function createWorldStateHelpers(options) {
     setBlockState(block, block.stateId);
   }
 
+  for (const container of savedContainers) {
+    createContainer(container.type, container.positions, container.items, container.data);
+  }
+
   if (savedBlocks.length > 0) {
     rebakeLightingForPositions(savedBlocks);
   }
 
   return {
     collectChunkNeighborhood,
+    createContainer,
+    deleteContainer,
     getBaseBlockState,
     getBiomeId,
     getBlockState,
     getChunkLightUpdate,
     getChunkPacket,
     getChunkPackets,
+    getContainers,
+    getContainersInChunk,
+    getContainerAt,
     getModifiedBlocks,
     hasChunk,
     preGenerateChunk: preGenerateChunkAsync,
     rebakeLightingForPositions,
     serialize,
-    setBlockState
+    setBlockState,
+    setContainerData,
+    setContainerItems,
+    setContainerPositions
   };
 }
 

@@ -13,9 +13,13 @@ const {
 } = require('../inventory');
 const {
   applyCraftResultClick: applySharedCraftResultClick,
+  applyCraftResultQuickMove,
+  applyDragClick,
   applyOutsideClick: applySharedOutsideClick,
+  applyQuickMoveClick,
   applyStandardSlotClick: applySharedStandardSlotClick
 } = require('./inventory-clicks');
+const { applyRecipeBookSelection } = require('./recipe-book');
 
 const OUTSIDE_WINDOW_SLOT = -999;
 const PLAYER_CRAFT_INPUT_SLOTS = [1, 2, 3, 4];
@@ -147,6 +151,22 @@ function applyOutsideClick(inventory, mouseButton) {
   });
 }
 
+function getPlayerQuickMoveTargets(slot) {
+  if (slot === 0 || (slot >= 1 && slot <= 8) || slot === 45) {
+    return Array.from({ length: 36 }, (_, index) => index + 9);
+  }
+
+  if (slot >= 9 && slot <= 35) {
+    return Array.from({ length: 9 }, (_, index) => index + 36);
+  }
+
+  if (slot >= 36 && slot <= 44) {
+    return Array.from({ length: 27 }, (_, index) => index + 9);
+  }
+
+  return [];
+}
+
 function createPlayerInventoryApi({ crafting, mcData, translateItemId = null, writePlayPacket }) {
   function sendInventoryBootstrap(client) {
     recomputeCraftingResult(client.inventoryState, crafting);
@@ -173,6 +193,35 @@ function createPlayerInventoryApi({ crafting, mcData, translateItemId = null, wr
     sendFullInventoryState(client, writePlayPacket, translateItemId);
   }
 
+  function applyRecipeSelection(client, recipe, makeAll = false) {
+    if (!client?.inventoryState || !recipe) {
+      return false;
+    }
+
+    const nextInventory = cloneInventoryState(client.inventoryState);
+    const applied = applyRecipeBookSelection({
+      grid: nextInventory.craftInput,
+      gridHeight: 2,
+      gridWidth: 2,
+      makeAll,
+      mcData,
+      recipe,
+      storageSections: [nextInventory.main, nextInventory.hotbar]
+    });
+
+    if (!applied.applied) {
+      return false;
+    }
+
+    client.inventoryState.craftInput = nextInventory.craftInput;
+    client.inventoryState.main = nextInventory.main;
+    client.inventoryState.hotbar = nextInventory.hotbar;
+    recomputeCraftingResult(client.inventoryState, crafting);
+    incrementInventoryState(client.inventoryState);
+    sendFullInventoryState(client, writePlayPacket, translateItemId);
+    return true;
+  }
+
   function syncHotbarWindowChanges(client, changedSlots) {
     for (const slot of changedSlots) {
       if (!isHotbarWindowSlot(slot)) {
@@ -190,8 +239,10 @@ function createPlayerInventoryApi({ crafting, mcData, translateItemId = null, wr
 
     const previousInventory = cloneInventoryState(client.inventoryState);
     let changed = false;
+    let handled = false;
 
     if (packet.mode === 0) {
+      handled = true;
       if (packet.slot === OUTSIDE_WINDOW_SLOT) {
         changed = applyOutsideClick(client.inventoryState, packet.mouseButton);
       } else if (packet.slot === 0) {
@@ -203,9 +254,96 @@ function createPlayerInventoryApi({ crafting, mcData, translateItemId = null, wr
           recomputeCraftingResult(client.inventoryState, crafting);
         }
       }
+    } else if (packet.mode === 1 && packet.slot >= 0 && packet.slot < PLAYER_WINDOW_SLOT_COUNT) {
+      handled = true;
+
+      if (packet.slot === 0) {
+        const result = applyCraftResultQuickMove({
+          decrementMatchedInputs(matchedSlots) {
+            decrementCraftingInputs(client.inventoryState, matchedSlots);
+          },
+          getResultItem() {
+            return client.inventoryState.craftResult;
+          },
+          getSlotItem(slot) {
+            return getWindowSlotItem(client.inventoryState, slot);
+          },
+          mcData,
+          recomputeCraftingResult() {
+            return recomputeCraftingResult(client.inventoryState, crafting);
+          },
+          setSlotItem(slot, item) {
+            setWindowSlotItem(client.inventoryState, slot, item);
+          },
+          targetSlots: Array.from({ length: 36 }, (_, index) => index + 9)
+        });
+        changed = result.changed;
+      } else {
+        const result = applyQuickMoveClick({
+          getSlotItem(slot) {
+            return getWindowSlotItem(client.inventoryState, slot);
+          },
+          mcData,
+          setSlotItem(slot, item) {
+            setWindowSlotItem(client.inventoryState, slot, item);
+          },
+          slot: packet.slot,
+          targetSlots: getPlayerQuickMoveTargets(packet.slot)
+        });
+        changed = result.changed;
+
+        if (changed && PLAYER_CRAFT_INPUT_SLOTS.includes(packet.slot)) {
+          recomputeCraftingResult(client.inventoryState, crafting);
+        }
+      }
+    } else if (packet.mode === 5) {
+      const result = applyDragClick({
+        clearDragState() {
+          client.dragState = null;
+        },
+        getCursorItem() {
+          return client.inventoryState.cursor;
+        },
+        getDragState() {
+          return client.dragState?.windowId === PLAYER_INVENTORY_WINDOW_ID ? client.dragState : null;
+        },
+        getSlotItem(slot) {
+          return getWindowSlotItem(client.inventoryState, slot);
+        },
+        isSlotAllowed(slot) {
+          return slot >= 1 && slot < PLAYER_WINDOW_SLOT_COUNT;
+        },
+        mcData,
+        mouseButton: packet.mouseButton,
+        setCursorItem(item) {
+          client.inventoryState.cursor = item;
+        },
+        setDragState(state) {
+          client.dragState = state
+            ? {
+                ...state,
+                windowId: PLAYER_INVENTORY_WINDOW_ID
+              }
+            : null;
+        },
+        setSlotItem(slot, item) {
+          setWindowSlotItem(client.inventoryState, slot, item);
+        },
+        slot: packet.slot
+      });
+      handled = result.handled;
+      changed = result.changed;
+
+      if (changed && result.changedSlots.some((slot) => PLAYER_CRAFT_INPUT_SLOTS.includes(slot))) {
+        recomputeCraftingResult(client.inventoryState, crafting);
+      }
     }
 
     if (!changed) {
+      if (!handled) {
+        return false;
+      }
+
       sendFullInventoryState(client, writePlayPacket, translateItemId);
       return false;
     }
@@ -220,6 +358,7 @@ function createPlayerInventoryApi({ crafting, mcData, translateItemId = null, wr
   return {
     commitInventoryChange,
     handleWindowClick,
+    applyRecipeSelection,
     recomputeCraftingResult(inventory) {
       return recomputeCraftingResult(inventory, crafting);
     },

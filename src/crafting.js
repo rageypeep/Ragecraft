@@ -94,6 +94,137 @@ function createRecipeCatalog(mcData) {
   const recipes = [];
   const recipesByResultId = new Map();
   const recipesByResultName = new Map();
+  const recipesByDisplayId = new Map();
+  let nextDisplayId = 0;
+
+  function createProtocolSlot(itemId, count = 1, translateItemId = null) {
+    const resolvedItemId = typeof translateItemId === 'function'
+      ? translateItemId(itemId)
+      : itemId;
+
+    return {
+      itemCount: count,
+      itemId: resolvedItemId,
+      addedComponentCount: 0,
+      removedComponentCount: 0,
+      components: [],
+      removeComponents: []
+    };
+  }
+
+  function createItemSlotDisplay(itemId, count = 1, translateItemId = null) {
+    if (count > 1) {
+      return {
+        type: 'item_stack',
+        data: createProtocolSlot(itemId, count, translateItemId)
+      };
+    }
+
+    return {
+      type: 'item',
+      data: typeof translateItemId === 'function' ? translateItemId(itemId) : itemId
+    };
+  }
+
+  function expandIngredientIds(recipe) {
+    if (recipe.type === 'shaped' && Array.isArray(recipe.shape)) {
+      return recipe.shape.flat().filter((itemId) => Number.isInteger(itemId));
+    }
+
+    const expanded = [];
+
+    for (const ingredient of recipe.ingredients) {
+      for (let count = 0; count < ingredient.count; count++) {
+        expanded.push(ingredient.itemId);
+      }
+    }
+
+    return expanded;
+  }
+
+  function createCraftingStationDisplay(recipe, translateItemId = null) {
+    const craftingTableId = mcData.itemsByName.crafting_table?.id ?? null;
+    const requiresCraftingTable = recipe.type === 'shaped'
+      ? recipe.width > 2 || recipe.height > 2
+      : expandIngredientIds(recipe).length > 4;
+
+    if (!requiresCraftingTable || !Number.isInteger(craftingTableId)) {
+      return {
+        type: 'empty'
+      };
+    }
+
+    return createItemSlotDisplay(craftingTableId, 1, translateItemId);
+  }
+
+  function resolveRecipeCategory(recipe) {
+    const resultName = recipe.result.name;
+
+    if (
+      resultName.includes('sword') ||
+      resultName.includes('pickaxe') ||
+      resultName.includes('axe') ||
+      resultName.includes('shovel') ||
+      resultName.includes('hoe') ||
+      resultName.includes('helmet') ||
+      resultName.includes('chestplate') ||
+      resultName.includes('leggings') ||
+      resultName.includes('boots')
+    ) {
+      return 'crafting_equipment';
+    }
+
+    if (
+      resultName.includes('redstone') ||
+      resultName.includes('comparator') ||
+      resultName.includes('repeater') ||
+      resultName.includes('observer') ||
+      resultName.includes('hopper') ||
+      resultName.includes('piston') ||
+      resultName.includes('lever') ||
+      resultName.includes('button') ||
+      resultName.includes('pressure_plate')
+    ) {
+      return 'crafting_redstone';
+    }
+
+    if (mcData.blocksByName[resultName]) {
+      return 'crafting_building_blocks';
+    }
+
+    return 'crafting_misc';
+  }
+
+  function createRecipeDisplay(recipe, translateItemId = null) {
+    const station = createCraftingStationDisplay(recipe, translateItemId);
+    const result = createItemSlotDisplay(recipe.result.itemId, recipe.result.count, translateItemId);
+
+    if (recipe.type === 'shaped') {
+      return {
+        type: 'crafting_shaped',
+        data: {
+          width: recipe.shape?.[0]?.length ?? 0,
+          height: recipe.shape?.length ?? 0,
+          ingredients: recipe.shape.flat().map((itemId) => (
+            Number.isInteger(itemId)
+              ? createItemSlotDisplay(itemId, 1, translateItemId)
+              : { type: 'empty' }
+          )),
+          result,
+          craftingStation: station
+        }
+      };
+    }
+
+    return {
+      type: 'crafting_shapeless',
+      data: {
+        ingredients: expandIngredientIds(recipe).map((itemId) => createItemSlotDisplay(itemId, 1, translateItemId)),
+        result,
+        craftingStation: station
+      }
+    };
+  }
 
   for (const [resultIdText, entries] of Object.entries(recipesData)) {
     const resultItemId = Number.parseInt(resultIdText, 10);
@@ -125,6 +256,7 @@ function createRecipeCatalog(mcData) {
         : null;
 
       const normalizedRecipe = {
+        displayId: nextDisplayId++,
         id: `${resultItem.name}:${index}`,
         type: recipeType,
         width: entry.inShape ? Math.max(...entry.inShape.map((row) => row.length)) : null,
@@ -142,6 +274,7 @@ function createRecipeCatalog(mcData) {
       };
 
       recipes.push(normalizedRecipe);
+      recipesByDisplayId.set(normalizedRecipe.displayId, normalizedRecipe);
 
       if (!recipesByResultId.has(normalizedRecipe.result.itemId)) {
         recipesByResultId.set(normalizedRecipe.result.itemId, []);
@@ -348,6 +481,42 @@ function createRecipeCatalog(mcData) {
         craftedExecutions: craftExecutions,
         outputCount: craftExecutions * chosenRecipe.result.count
       };
+    },
+    getRecipeBookPackets(translateItemId = null) {
+      return {
+        declareRecipes: {
+          recipes: recipes.map((recipe) => ({
+            name: recipe.id,
+            items: Array.from(new Set(expandIngredientIds(recipe))).map((itemId) => (
+              typeof translateItemId === 'function' ? translateItemId(itemId) : itemId
+            ))
+          })),
+          stoneCutterRecipes: []
+        },
+        recipeBookAdd: {
+          entries: recipes.map((recipe) => ({
+            recipe: {
+              displayId: recipe.displayId,
+              display: createRecipeDisplay(recipe, translateItemId),
+              group: undefined,
+              category: resolveRecipeCategory(recipe),
+              craftingRequirements: undefined
+            },
+            flags: {
+              notification: false,
+              highlight: false
+            }
+          })),
+          replace: true
+        }
+      };
+    },
+    getRecipeDisplayById(displayId, translateItemId = null) {
+      const recipe = recipesByDisplayId.get(displayId);
+      return recipe ? createRecipeDisplay(recipe, translateItemId) : null;
+    },
+    getRecipeByDisplayId(displayId) {
+      return recipesByDisplayId.get(displayId) ?? null;
     }
   };
 }

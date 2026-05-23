@@ -23,9 +23,12 @@ Ragecraft can currently:
 - support mining and block placement
 - support basic slash commands such as `/help`, `/spawn`, `/tp`, `/time`, and `/save`
 - load the bundled vanilla Minecraft crafting recipe set and expose `/recipes`, `/craft`, player-inventory `2x2` crafting, and crafting-table `3x3` crafting
+- declare vanilla crafting recipes to the client so the recipe book can populate and place recipes into the crafting grid
+- open and use single or double chests as real storage containers
+- open and use furnace, blast-furnace, and smoker containers with basic server-side processing
 - track other connected players as visible entities
 - spawn visible dropped item entities and collect them on contact
-- sync the player inventory window and a basic crafting-table container flow
+- sync the player inventory window plus crafting-table, chest, and furnace-style container flows, including shift-click, drag-splitting, and authoritative invalid-click resyncs
 - persist modified world blocks to disk
 - persist player position and inventory state across reconnects
 
@@ -55,7 +58,9 @@ Known rough edges right now:
 
 - the old terrain-light striping / seam artifact on `26.1.2` is fixed after chunk/light template and skylight propagation corrections
 - chunk loading performance is much better again after removing the expensive send-time lighting workaround, and the join path now avoids repeated safe-spawn scans while prewarming the spawn chunk neighborhood
-- crafting now works through the player inventory `2x2` grid, a basic `3x3` crafting-table window, and `/craft`, but richer container behavior is still missing
+- crafting now works through the player inventory `2x2` grid, a basic `3x3` crafting-table window, and `/craft`
+- chest storage now works for both single and double chests, furnaces/smokers/blast furnaces now process basic cooking recipes, and the current inventory layer now covers basic left/right clicks, shift-click, drag-splitting, recipe-book settings sync, recipe-book declaration/discovery, and recipe-driven grid placement for both `2x2` and `3x3` crafting
+- recipe-book support is usable now, but it is still not a fully polished vanilla implementation yet
 - the `26.1.2` compatibility bridge is now large enough that the next protocol milestone should be native Prismarine support instead of piling on more local shims forever
 - if you are testing terrain/light changes, use a fresh save or reconnect cleanly before comparing screenshots
 
@@ -264,8 +269,8 @@ npm run generate:2612-compat-report
 
 Current high-value next steps:
 
-- add better inventory interaction coverage such as shift-click, drag-splitting, and recipe-book sync
-- broaden container coverage beyond crafting tables into more real opened-block inventories
+- harden container persistence and recovery further so open-window saves and abrupt disconnects cannot duplicate or lose items
+- harden inventory edge cases around disconnects, overflow, and invalid swaps
 - convert the current `26.1.2` compatibility bridge into a path toward native `minecraft-data` / `minecraft-protocol` support
 - keep shrinking `src/world.js` so runtime orchestration stays readable
 - continue profiling any remaining chunk-stream hitching under real multiplayer load

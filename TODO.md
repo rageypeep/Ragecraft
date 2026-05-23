@@ -71,11 +71,12 @@
 
 ## Crafting
 
-- [ ] Expand container interactions further: shift-click, drag-splitting, and recipe-book sync.
-- [ ] Add proper container-close cleanup and item return behavior for every open inventory path, not just the current crafting table.
-- [ ] Add client-visible recipe discovery / declaration flow so the recipe book can become usable instead of only server-side matching.
-- [ ] Add more real block containers after crafting tables, starting with chest semantics and then furnace-style processing inventories.
-- [ ] Add authoritative inventory transfer rules for edge cases: full inventories, cursor overflow, invalid swaps, and disconnect/reconnect during open containers.
+- [x] Expand container interactions further: shift-click, drag-splitting, and recipe-book sync.
+- [x] Add proper container-close cleanup and item return behavior for every open inventory path, not just the current crafting table.
+- [x] Add client-visible recipe discovery / declaration flow so the recipe book can become usable instead of only server-side matching.
+- [x] Add more real block containers after crafting tables, starting with chest semantics and then furnace-style processing inventories.
+- [x] Add furnace-style processing inventories after chest support.
+- [x] Add authoritative inventory transfer rules for edge cases: full inventories, cursor overflow, invalid swaps, and disconnect/reconnect during open containers.
 - [ ] Revisit persistence around open containers so mid-session saves and unclean disconnects cannot duplicate or lose items.
 - [ ] Add gameplay smoke coverage for core recipes:
   logs -> planks
